@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "39b32a27-8068-4c51-8d8e-58ad3c87eeac"
+      }
+    },
+    "android": {
+      "package": "com.nixon47.momentapp"
+    }
+  }
+}
