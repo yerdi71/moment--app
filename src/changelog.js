@@ -1,13 +1,40 @@
 // ─── Changelog — Historia zmian w aplikacji ───
 
-export const CURRENT_VERSION = '0.7.4';
+export const CURRENT_VERSION = '0.7.4.1';
 
 export const CHANGELOG = [
   {
-    version: '0.7.4',
+    version: '0.7.4.1',
     date: '14 października 2026',
     isCurrent: true,
-    badge: '🚀 WIELKA AKTUALIZACJA',
+    badge: '🧪 Wersja Beta',
+    changes: {
+      added: [
+        '🧪 Przebudowa systemu testowego — panel z symulacjami',
+        '⚠️ Komunikat Beta przy każdym wejściu do aplikacji',
+        '🔔 Nowe sekcje w panelu testowym (Passa, Media, Ogród, Odznaki, Powiadomienia, Reset)',
+        '📤 Eksport w jednym oknie z wyborem formatu',
+        '🎨 Możliwość ukrycia paska systemowego Androida',
+      ],
+      fixed: [
+        '🐛 Kliknięcie ☀️/🌙 przy PIN nie wyrzuca już do blokady',
+        '🐛 X w Cichym Aniele działa poprawnie',
+        '🐛 Dodano X do sekcji „Wdzięczność w akcji"',
+        '🐛 Pasek akcji Androida ukryty podczas używania aplikacji',
+        '🐛 Możliwość odsłuchania wiadomości głosowej',
+      ],
+      changed: [
+        '📅 Ikona kalendarza przeniesiona do Statystyk',
+        '⚙️ Ikona ustawień przywrócona do głównego menu',
+        '📤 Eksport połączony w jedno okno',
+      ],
+    },
+  },
+  {
+    version: '0.7.4',
+    date: '14 października 2026',
+    isCurrent: false,
+    badge: '🚀 Wielka aktualizacja',
     changes: {
       added: [
         '🎨 Nowa ikona aplikacji — neonowa roślinka',
@@ -137,7 +164,7 @@ export const CHANGELOG = [
   },
 ];
 
-// ─── Funkcja pomocnicza ───
+// ─── Funkcje pomocnicze ───
 
 export const getLatestChanges = () => {
   return CHANGELOG[0] || null;
