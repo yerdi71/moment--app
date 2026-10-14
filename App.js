@@ -9,29 +9,64 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Sharing from 'expo-sharing';
+import { Audio } from 'expo-av';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   VERSION, INITIAL_VISIBLE, LOAD_STEP, STORAGE_KEYS,
   EMOTIONS, SAMPLE_IMAGES, UI_THEMES, LIGHT_THEMES, CARD_BACKGROUNDS,
-  ACHIEVEMENTS_LIST, DAILY_PROMPTS, DAILY_AFFIRMATIONS, DAILY_QUOTES,
+  ACHIEVEMENTS_LIST, GARDEN_ACHIEVEMENTS, DAILY_PROMPTS, DAILY_AFFIRMATIONS, DAILY_QUOTES,
 } from './src/constants';
 
 import {
   formatDateToKey, vibrate, getDayOfYear, buildMoment, calculateStreak,
   buildSections, paginateSections, computeWeeklyReport, computeLast7Days,
   computeTopWords, computeStats, computeMoodRecommendation, computeNostalgiaBuckets,
+  computeGardenGrowth, computeGardenState, isWateredToday, computeWateringStreak,
+  getCurrentTreeStage, getNextTreeStage, getDaysSinceLastEntry,
 } from './src/utils';
 
 import { styles } from './src/styles';
 import { Toast, MomentCard, WeekChart, PixelYear } from './src/components';
+import SearchModal from './src/SearchModal';
+import Garden from './src/Garden';
+import { CHANGELOG, CURRENT_VERSION } from './src/changelog';
 
+import {
+  requestNotificationPermissions,
+  scheduleDailyReminder,
+  disableDailyReminder,
+  isDailyReminderEnabled,
+  getSavedReminderTime,
+  setupNotificationChannel,
+  addNotificationResponseListener,
+  getNotificationStatus,
+} from './src/notifications';
+
+// ═══════════════════════════════════════════
+// GŁÓWNY KOMPONENT
+// ═══════════════════════════════════════════
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppInner />
+    </SafeAreaProvider>
+  );
+}
+
+function AppInner() {
   const systemScheme = useColorScheme();
+  const insets = useSafeAreaInsets();
+
+  // ─── Stan główny ───
   const [moments, setMoments] = useState([]);
+  const [waterings, setWaterings] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
   const [editingMomentId, setEditingMomentId] = useState(null);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(null);
 
+  // ─── PIN + biometria ───
   const [savedPin, setSavedPin] = useState(null);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
@@ -42,10 +77,12 @@ export default function App() {
   const [pinLockedUntil, setPinLockedUntil] = useState(0);
   const [pinLockTimer, setPinLockTimer] = useState(0);
 
+  // ─── Nawigacja ───
   const [currentTab, setCurrentTab] = useState('home');
   const [currentViewMode, setCurrentViewMode] = useState('list');
   const [returnTab, setReturnTab] = useState(null);
 
+  // ─── Edycja momentu ───
   const [momentText, setMomentText] = useState('');
   const [momentImage, setMomentImage] = useState(null);
   const [momentMood, setMomentMood] = useState('😊');
@@ -54,30 +91,41 @@ export default function App() {
   const [momentSource, setMomentSource] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recording, setRecording] = useState(null);
   const [isLoadingGps, setIsLoadingGps] = useState(false);
 
+  // ─── Ustawienia ───
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [isThemePickerVisible, setIsThemePickerVisible] = useState(false);
+  const [isChangelogVisible, setIsChangelogVisible] = useState(false);
   const [currentThemeId, setCurrentThemeId] = useState('minimal-dark');
   const [notifHour, setNotifHour] = useState('20');
   const [notifMinute, setNotifMinute] = useState('00');
+  const [notifPermission, setNotifPermission] = useState('unknown');
+  const [dailyNotifEnabled, setDailyNotifEnabled] = useState(false);
 
+  // ─── Kalendarz ───
   const [selectedCalendarMoment, setSelectedCalendarMoment] = useState(null);
   const [calendarDate, setCalendarDate] = useState(new Date());
 
+  // ─── Filtry ───
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMoodFilter, setSelectedMoodFilter] = useState(null);
   const [selectedTagFilter, setSelectedTagFilter] = useState(null);
   const [selectedLocationFilter, setSelectedLocationFilter] = useState(null);
   const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
 
+  // ─── Paginacja ───
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const listRef = useRef(null);
 
+  // ─── Karty ───
   const [cardMoment, setCardMoment] = useState(null);
   const [selectedCardBg, setSelectedCardBg] = useState(CARD_BACKGROUNDS[0]);
 
+  // ─── Modale ───
   const [isWeeklyReportVisible, setIsWeeklyReportVisible] = useState(false);
   const [isStreakModalVisible, setIsStreakModalVisible] = useState(false);
   const [isPixelYearVisible, setIsPixelYearVisible] = useState(false);
@@ -90,14 +138,17 @@ export default function App() {
   const [actionMoment, setActionMoment] = useState(null);
   const [randomMoment, setRandomMoment] = useState(null);
 
+  // ─── Kapsuły ───
   const [capsules, setCapsules] = useState([]);
   const [capsuleText, setCapsuleText] = useState('');
   const [capsuleDays, setCapsuleDays] = useState('30');
   const [unlockedCapsule, setUnlockedCapsule] = useState(null);
 
+  // ─── Codzienne treści ───
   const [showAffirmation, setShowAffirmation] = useState(false);
   const [todayAffirmation, setTodayAffirmation] = useState('');
 
+  // ─── Toast / Undo ───
   const [pendingUndo, setPendingUndo] = useState(null);
   const undoTimeout = useRef(null);
   const [toastMessage, setToastMessage] = useState(null);
@@ -106,6 +157,7 @@ export default function App() {
 
   const hasShownBetaAlert = useRef(false);
 
+  // ─── Derywacje ───
   const todayCode = useMemo(() => formatDateToKey(new Date()), []);
   const todayPrompt = useMemo(() => DAILY_PROMPTS[getDayOfYear() % DAILY_PROMPTS.length], []);
   const todayQuote = useMemo(() => DAILY_QUOTES[getDayOfYear() % DAILY_QUOTES.length], []);
@@ -120,6 +172,12 @@ export default function App() {
   }, [currentThemeId]);
 
   const themeList = useMemo(() => Object.values(UI_THEMES), []);
+  const currentStreak = useMemo(() => calculateStreak(moments), [moments]);
+
+  const gardenGrowth = useMemo(() => computeGardenGrowth(moments), [moments]);
+  const gardenState = useMemo(() => computeGardenState(moments), [moments]);
+  const wateringStreak = useMemo(() => computeWateringStreak(waterings), [waterings]);
+  const wateredToday = useMemo(() => isWateredToday(waterings), [waterings]);
 
   const showToast = useCallback((msg, actionLabel, onAction) => {
     setToastMessage(msg);
@@ -131,8 +189,17 @@ export default function App() {
     }, actionLabel ? 5000 : 2200);
   }, []);
 
-  const currentStreak = useMemo(() => calculateStreak(moments), [moments]);
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (searchQuery.trim()) count++;
+    if (selectedMoodFilter) count++;
+    if (selectedTagFilter) count++;
+    if (selectedLocationFilter) count++;
+    if (onlyFavorites) count++;
+    return count;
+  }, [searchQuery, selectedMoodFilter, selectedTagFilter, selectedLocationFilter, onlyFavorites]);
 
+  // ─── Motyw ───
   const toggleTheme = useCallback(() => {
     const nextId = currentThemeId === 'soft-minimal' ? 'minimal-dark' : 'soft-minimal';
     setCurrentThemeId(nextId);
@@ -143,6 +210,7 @@ export default function App() {
     }));
   }, [currentThemeId, notifHour, notifMinute, showToast]);
 
+  // ─── Biometria ───
   const tryBiometricUnlock = useCallback(async () => {
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
@@ -167,18 +235,23 @@ export default function App() {
     }
   }, []);
 
+  // ─── Ładowanie danych ───
   const loadAppData = useCallback(async () => {
     try {
-      const [storedMoments, onboardingStatus, storedSettings, storedPin, storedCapsules, storedBiometric] = await Promise.all([
+      const [storedMoments, onboardingStatus, storedSettings, storedPin, storedCapsules, storedBiometric, storedWaterings] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.moments),
         AsyncStorage.getItem(STORAGE_KEYS.onboarding),
         AsyncStorage.getItem(STORAGE_KEYS.settings),
         AsyncStorage.getItem(STORAGE_KEYS.appPin),
         AsyncStorage.getItem(STORAGE_KEYS.capsules),
         AsyncStorage.getItem(STORAGE_KEYS.biometricEnabled),
+        AsyncStorage.getItem(STORAGE_KEYS.waterings),
       ]);
+
       if (storedMoments) setMoments(JSON.parse(storedMoments));
       if (storedCapsules) setCapsules(JSON.parse(storedCapsules));
+      if (storedWaterings) setWaterings(JSON.parse(storedWaterings));
+
       setHasCompletedOnboarding(onboardingStatus === 'true');
 
       if (storedPin) {
@@ -199,6 +272,14 @@ export default function App() {
         setCurrentThemeId(systemScheme === 'light' ? 'soft-minimal' : 'minimal-dark');
       }
 
+      const notifStatus = await getNotificationStatus();
+      setNotifPermission(notifStatus.permission);
+      setDailyNotifEnabled(notifStatus.dailyEnabled);
+      if (notifStatus.hour !== undefined) setNotifHour(String(notifStatus.hour));
+      if (notifStatus.minute !== undefined) setNotifMinute(String(notifStatus.minute).padStart(2, '0'));
+
+      await setupNotificationChannel();
+
       const lastSeen = await AsyncStorage.getItem(STORAGE_KEYS.affirmationSeen);
       if (lastSeen !== todayCode) {
         const idx = getDayOfYear() % DAILY_AFFIRMATIONS.length;
@@ -214,7 +295,7 @@ export default function App() {
         hasShownBetaAlert.current = true;
         Alert.alert(
           `Wersja ${VERSION} ✨`,
-          'Naprawione: pasek Androida, strzałka, paginacja, symulator, motywy.\nNowe: zdjęcia z galerii, GPS, biometria.',
+          'Wielka aktualizacja!\n\n🎨 Nowa ikona\n🔍 Nowy modal wyszukiwania\n🌳 System dbania o drzewko\n🎙️ Prawdziwe nagrywanie głosu\n📷 Aparat w apce\n🔔 Powiadomienia o 20:00\n📜 Historia zmian',
           [{ text: 'Super!' }]
         );
       }
@@ -226,6 +307,13 @@ export default function App() {
     StatusBar.setBarStyle(theme.isLight ? 'dark-content' : 'light-content');
     loadAppData();
   }, [loadAppData, theme.isLight]);
+
+  useEffect(() => {
+    const sub = addNotificationResponseListener((data) => {
+      console.log('Notification clicked:', data);
+    });
+    return () => { if (sub && sub.remove) sub.remove(); };
+  }, []);
 
   useEffect(() => {
     let interval = null;
@@ -248,6 +336,7 @@ export default function App() {
     setVisibleCount(INITIAL_VISIBLE);
   }, [searchQuery, selectedMoodFilter, selectedTagFilter, selectedLocationFilter, onlyFavorites]);
 
+  // ─── Backup ───
   const rotateBackup = useCallback(async (newMoments) => {
     try {
       const key = STORAGE_KEYS.backupPrefix + Date.now();
@@ -269,6 +358,11 @@ export default function App() {
     rotateBackup(updated);
   }, [rotateBackup]);
 
+  const persistWaterings = useCallback(async (updated) => {
+    setWaterings(updated);
+    await AsyncStorage.setItem(STORAGE_KEYS.waterings, JSON.stringify(updated));
+  }, []);
+
   const saveSettings = useCallback(async (newThemeId, newHour, newMinute) => {
     const settings = {
       themeId: newThemeId || currentThemeId,
@@ -285,6 +379,7 @@ export default function App() {
     vibrate(15);
   }, [notifHour, notifMinute, saveSettings]);
 
+  // ─── Powiadomienia: zapis godziny ───
   const handleSaveNotifTime = async () => {
     const h = parseInt(notifHour, 10);
     const m = parseInt(notifMinute, 10);
@@ -293,10 +388,45 @@ export default function App() {
       return;
     }
     await saveSettings(currentThemeId, notifHour, notifMinute);
+
+    if (dailyNotifEnabled) {
+      const result = await scheduleDailyReminder(h, m);
+      if (result.success) {
+        showToast(`Przypomnienie: ${notifHour}:${notifMinute} ✓`);
+      } else {
+        showToast('Nie udało się ustawić przypomnienia');
+      }
+    } else {
+      showToast('Godzina zapisana ✓');
+    }
     vibrate(30);
-    showToast('Godzina zapisana ✓');
   };
 
+  const toggleDailyNotifications = async () => {
+    if (!dailyNotifEnabled) {
+      const granted = await requestNotificationPermissions();
+      setNotifPermission(granted ? 'granted' : 'denied');
+      if (!granted) {
+        Alert.alert('Brak uprawnień', 'Włącz powiadomienia w ustawieniach systemowych.');
+        return;
+      }
+      const h = parseInt(notifHour, 10);
+      const m = parseInt(notifMinute, 10);
+      const result = await scheduleDailyReminder(h, m);
+      if (result.success) {
+        setDailyNotifEnabled(true);
+        vibrate(30);
+        showToast('Powiadomienia włączone 🔔');
+      }
+    } else {
+      await disableDailyReminder();
+      setDailyNotifEnabled(false);
+      vibrate(20);
+      showToast('Powiadomienia wyłączone');
+    }
+  };
+
+  // ─── Export ───
   const exportDataJSON = async () => {
     if (moments.length === 0) return Alert.alert('Brak danych', 'Brak wpisów do eksportu.');
     await Share.share({ message: JSON.stringify(moments, null, 2) });
@@ -326,9 +456,9 @@ export default function App() {
           const allKeys = await AsyncStorage.getAllKeys();
           const backupKeys = allKeys.filter(k => k.startsWith(STORAGE_KEYS.backupPrefix));
           await AsyncStorage.multiRemove([...Object.values(STORAGE_KEYS), ...backupKeys]);
-          setMoments([]); setCapsules([]);
+          setMoments([]); setCapsules([]); setWaterings([]);
           setHasCompletedOnboarding(false); setSavedPin(null); setIsLocked(false);
-          setBiometricEnabled(false);
+          setBiometricEnabled(false); setDailyNotifEnabled(false);
           setIsSettingsVisible(false);
           setCurrentThemeId(systemScheme === 'light' ? 'soft-minimal' : 'minimal-dark');
           setCurrentTab('home');
@@ -338,11 +468,12 @@ export default function App() {
     ]);
   }, [systemScheme]);
 
+  // ─── Zdjęcia: galeria ───
   const pickImageFromGallery = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Brak dostępu', 'Potrzebujemy dostępu do galerii, aby dodać zdjęcie.');
+        Alert.alert('Brak dostępu', 'Potrzebujemy dostępu do galerii.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -363,12 +494,38 @@ export default function App() {
     }
   };
 
+  // ─── Zdjęcia: aparat ───
+  const pickImageFromCamera = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Brak dostępu', 'Potrzebujemy dostępu do aparatu.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setMomentImage(result.assets[0].uri);
+        setMomentSource('camera');
+        vibrate(15);
+        showToast('Zdjęcie zrobione 📷');
+      }
+    } catch (e) {
+      console.error('camera', e);
+      Alert.alert('Błąd', 'Nie udało się otworzyć aparatu.');
+    }
+  };
+
   const pickRandomImage = () => {
     setMomentImage(SAMPLE_IMAGES[Math.floor(Math.random() * SAMPLE_IMAGES.length)]);
     setMomentSource(null);
     vibrate(15);
   };
 
+  // ─── GPS ───
   const useCurrentLocation = async () => {
     setIsLoadingGps(true);
     try {
@@ -387,8 +544,7 @@ export default function App() {
       if (address) {
         place = [address.city, address.region, address.country]
           .filter(Boolean).slice(0, 2).join(', ')
-          || address.name
-          || address.street
+          || address.name || address.street
           || `${location.coords.latitude.toFixed(3)}, ${location.coords.longitude.toFixed(3)}`;
       } else {
         place = `${location.coords.latitude.toFixed(3)}, ${location.coords.longitude.toFixed(3)}`;
@@ -405,18 +561,70 @@ export default function App() {
     }
   };
 
-  const toggleRecording = () => {
-    if (isRecording) {
-      setIsRecording(false);
-      setMomentAudio({ duration: recordingSeconds });
-      vibrate(20);
-    } else {
-      setRecordingSeconds(0);
+  // ─── Audio: prawdziwe nagrywanie ───
+  const startRecording = async () => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Brak dostępu', 'Potrzebujemy dostępu do mikrofonu.');
+        return;
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      const { recording: rec } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setRecording(rec);
       setIsRecording(true);
+      setRecordingSeconds(0);
       vibrate(10);
+    } catch (e) {
+      console.error('startRecording', e);
+      Alert.alert('Błąd', 'Nie udało się rozpocząć nagrywania.');
     }
   };
 
+  const stopRecording = async () => {
+    try {
+      if (!recording) return;
+      setIsRecording(false);
+      await recording.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      const uri = recording.getURI();
+      const duration = recordingSeconds;
+      setRecording(null);
+      if (uri) {
+        setMomentAudio({ uri, duration });
+        vibrate(20);
+        showToast(`Nagrano ${duration}s 🎙️`);
+      }
+    } catch (e) {
+      console.error('stopRecording', e);
+      Alert.alert('Błąd', 'Nie udało się zatrzymać nagrywania.');
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) stopRecording();
+    else startRecording();
+  };
+
+  const playAudio = async () => {
+    if (!momentAudio?.uri) return;
+    try {
+      const { sound } = await Audio.Sound.createAsync({ uri: momentAudio.uri });
+      await sound.playAsync();
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) sound.unloadAsync();
+      });
+    } catch (e) {
+      console.error('playAudio', e);
+    }
+  };
+
+  // ─── Zapis momentu ───
   const handleSaveMoment = useCallback(async () => {
     if (!momentText.trim() && !momentImage && !momentAudio) return;
 
@@ -451,6 +659,12 @@ export default function App() {
     setMomentMood('😊'); setMomentLocation(''); setMomentSource(null);
     vibrate(35);
     showToast(editingMomentId ? 'Wpis zaktualizowany ✓' : 'Twój Jeden Moment zapisany ✓');
+
+    // ⭐ Nowy streak — jeśli 7 lub 30 dni, wyślij powiadomienie gratulacyjne
+    const newStreak = calculateStreak(updated);
+    if (newStreak === 7 || newStreak === 30) {
+      // Można dodać powiadomienie gratulacyjne
+    }
   }, [momentText, momentImage, momentAudio, momentMood, momentLocation, momentSource, editingMomentId, moments, persistMoments, showToast, todayCode]);
 
   const startEditingMoment = useCallback((item) => {
@@ -474,6 +688,7 @@ export default function App() {
     if (returnTab) { setCurrentTab(returnTab); setReturnTab(null); }
   }, [returnTab]);
 
+  // ─── Delete + Undo ───
   const deleteMoment = useCallback(async (id) => {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
     const current = raw ? JSON.parse(raw) : [];
@@ -517,6 +732,20 @@ export default function App() {
     showToast(m?.isFavorite ? 'Dodano do ulubionych ⭐' : 'Usunięto z ulubionych');
   }, [persistMoments, showToast]);
 
+  // ─── Podlewanie ───
+  const waterGarden = useCallback(async () => {
+    if (wateredToday) {
+      showToast('Już dziś podlane 💧 Wróć jutro!');
+      return;
+    }
+    const todayKey = formatDateToKey(new Date());
+    const updated = [...waterings, todayKey];
+    await persistWaterings(updated);
+    vibrate(40);
+    showToast('Drzewko podlane 💧 +5% do następnego wpisu');
+  }, [wateredToday, waterings, persistWaterings, showToast]);
+
+  // ─── PIN ───
   const handleUnlockPin = () => {
     if (pinLockedUntil > Date.now()) { showToast(`Poczekaj ${pinLockTimer}s`); return; }
     if (enteredPin === savedPin) {
@@ -559,7 +788,7 @@ export default function App() {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
     if (!hasHardware || !isEnrolled) {
-      Alert.alert('Niedostępne', 'Ten telefon nie ma skonfigurowanej biometrii (odcisk / Face ID).');
+      Alert.alert('Niedostępne', 'Ten telefon nie ma skonfigurowanej biometrii.');
       return;
     }
     const newVal = !biometricEnabled;
@@ -569,6 +798,7 @@ export default function App() {
     showToast(newVal ? 'Biometria włączona 🔐' : 'Biometria wyłączona');
   };
 
+  // ─── Kapsuły ───
   const createCapsule = async () => {
     if (!capsuleText.trim()) return Alert.alert('Puste', 'Napisz wiadomość do przyszłego siebie.');
     const days = parseInt(capsuleDays, 10);
@@ -601,6 +831,7 @@ export default function App() {
     showToast('Kapsuła usunięta');
   };
 
+  // ─── Menu akcji ───
   const openCardGenerator = useCallback((m) => setCardMoment(m), []);
   const openActionMenu = useCallback((m) => { vibrate(15); setActionMoment(m); }, []);
 
@@ -617,6 +848,7 @@ export default function App() {
     vibrate(20);
   }, [moments, showToast]);
 
+  // ─── Share ───
   const shareGeneratedCard = useCallback(async () => {
     if (!cardMoment) return;
     try {
@@ -633,6 +865,28 @@ export default function App() {
     } catch (e) { console.error(e); }
   }, [cardMoment]);
 
+  const shareViaSystem = useCallback(async () => {
+    if (!cardMoment) return;
+    try {
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert('Niedostępne', 'Udostępnianie systemowe nie jest dostępne.');
+        return;
+      }
+      const txt = `„${cardMoment.text}”\n\n— Jeden Moment`;
+      const fileUri = cardMoment.imageUri;
+      if (fileUri && fileUri.startsWith('file://')) {
+        await Sharing.shareAsync(fileUri);
+      } else {
+        await Share.share({ message: txt });
+      }
+    } catch (e) {
+      console.error('sharing', e);
+      Alert.alert('Błąd', 'Nie udało się udostępnić.');
+    }
+  }, [cardMoment]);
+
+  // ─── Symulatory ───
   const handleSimulateStreakDays = async (target) => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
@@ -642,29 +896,22 @@ export default function App() {
 
       let existingConsecutive = 0;
       for (let i = 0; i < 365; i++) {
-        const d = new Date(base);
-        d.setDate(d.getDate() - i);
+        const d = new Date(base); d.setDate(d.getDate() - i);
         const key = formatDateToKey(d);
-        if (newMoments.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) {
-          existingConsecutive++;
-        } else {
-          break;
-        }
+        if (newMoments.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) existingConsecutive++;
+        else break;
       }
 
       const addedDates = [];
       for (let i = 0; i < target; i++) {
         const offset = existingConsecutive + i;
-        const d = new Date(base);
-        d.setDate(d.getDate() - offset);
+        const d = new Date(base); d.setDate(d.getDate() - offset);
         const key = formatDateToKey(d);
         if (newMoments.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) continue;
-
         const mock = {
           ...buildMoment(`Symulowany wpis passy #symulacja`, EMOTIONS[offset % EMOTIONS.length], null, null, ''),
           id: `sim-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-          timestamp: d.getTime(),
-          dateKey: key,
+          timestamp: d.getTime(), dateKey: key,
           date: d.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
         };
         newMoments.push(mock);
@@ -673,19 +920,16 @@ export default function App() {
 
       await persistMoments(newMoments);
       vibrate(30);
-      const newTotal = existingConsecutive + addedDates.length;
-      showToast(`🧪 +${addedDates.length} dni (passa: ${newTotal})`);
+      showToast(`🧪 +${addedDates.length} dni`);
       setIsTestPanelVisible(false);
     } catch (e) {
       console.error('simulate', e);
-      Alert.alert('Błąd', 'Nie udało się symulować.');
     }
   };
 
   const handleSimulateMockMomentWithPhotoAndAudio = async () => {
     try {
-      const y = new Date();
-      y.setDate(y.getDate() - 1);
+      const y = new Date(); y.setDate(y.getDate() - 1);
       const key = formatDateToKey(y);
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
       const existing = raw ? JSON.parse(raw) : [];
@@ -694,20 +938,18 @@ export default function App() {
         return;
       }
       const m = {
-        ...buildMoment('Testowy moment #test wdzięczności 🚀', '⚡', SAMPLE_IMAGES[0], { duration: 5 }, 'Testowe miejsce'),
-        timestamp: y.getTime(),
-        dateKey: key,
+        ...buildMoment('Testowy moment #test 🚀', '⚡', SAMPLE_IMAGES[0], { duration: 5 }, 'Testowe miejsce'),
+        timestamp: y.getTime(), dateKey: key,
         date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
       };
       await persistMoments([m, ...existing]);
       vibrate(30);
-      showToast('Dodano testowy moment (wczoraj) 📷🎙️');
+      showToast('Dodano testowy moment 📷🎙️');
       setIsTestPanelVisible(false);
-    } catch (e) {
-      console.error('mock', e);
-    }
+    } catch (e) { console.error('mock', e); }
   };
 
+  // ─── Memo: filtrowanie ───
   const availableTags = useMemo(() => {
     const set = new Set();
     moments.forEach(m => {
@@ -763,20 +1005,14 @@ export default function App() {
   const scrollToTop = useCallback(() => {
     try {
       if (listRef.current && listRef.current.scrollToLocation) {
-        listRef.current.scrollToLocation({
-          sectionIndex: 0,
-          itemIndex: 0,
-          animated: true,
-          viewOffset: 0,
-          viewPosition: 0,
-        });
+        listRef.current.scrollToLocation({ sectionIndex: 0, itemIndex: 0, animated: true, viewOffset: 0, viewPosition: 0 });
       }
     } catch (_error) {
       try {
         if (listRef.current && listRef.current.scrollToOffset) {
           listRef.current.scrollToOffset({ offset: 0, animated: true });
         }
-      } catch (_e2) { /* ignore */ }
+      } catch (_e2) {}
     }
     vibrate(15);
   }, []);
@@ -788,6 +1024,7 @@ export default function App() {
     else if (y <= threshold && showScrollTop) setShowScrollTop(false);
   }, [showScrollTop]);
 
+  // ─── Statystyki ───
   const weeklyReport = useMemo(() => computeWeeklyReport(moments), [moments]);
   const last7DaysStats = useMemo(() => computeLast7Days(moments), [moments]);
   const topWords = useMemo(() => computeTopWords(moments), [moments]);
@@ -812,6 +1049,7 @@ export default function App() {
     },
   }), [theme]);
 
+  // ─── Kalendarz ───
   const calendarGridElements = useMemo(() => {
     const year = calendarDate.getFullYear();
     const month = calendarDate.getMonth();
@@ -899,7 +1137,9 @@ export default function App() {
     <MomentCard item={item} theme={theme} cardStyle={dynamicStyles.card} onMenu={openActionMenu} />
   ), [theme, dynamicStyles.card, openActionMenu]);
 
-  // ⭐ EKRAN BLOKADY
+  // ═══════════════════════════════════════════
+  // EKRAN BLOKADY PIN
+  // ═══════════════════════════════════════════
   if (isLocked) {
     return (
       <SafeAreaView style={[styles.container, styles.centered, { backgroundColor: theme.bg }]}>
@@ -935,6 +1175,9 @@ export default function App() {
     );
   }
 
+  // ═══════════════════════════════════════════
+  // ONBOARDING
+  // ═══════════════════════════════════════════
   if (hasCompletedOnboarding === false) {
     return (
       <SafeAreaView style={[styles.container, styles.centered, { backgroundColor: theme.bg }]}>
@@ -958,6 +1201,9 @@ export default function App() {
   const totalFiltered = filteredMoments.length;
   const hasMore = visibleCount < totalFiltered;
 
+  // ═══════════════════════════════════════════
+  // GŁÓWNY RENDER
+  // ═══════════════════════════════════════════
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -977,11 +1223,36 @@ export default function App() {
                   <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold', marginLeft: 3 }}>{currentStreak}</Text>
                 </TouchableOpacity>
 
-                {/* ⭐ Szybkie przełączanie motywu */}
-                <TouchableOpacity
-                  style={[styles.iconButton, { marginLeft: 8 }]}
-                  onPress={toggleTheme}
-                >
+                {currentTab === 'home' && (
+                  <TouchableOpacity
+                    style={[styles.iconButton, { marginLeft: 8 }]}
+                    onPress={() => { vibrate(10); setIsSearchModalVisible(true); }}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 18 }}>🔍</Text>
+                      {activeFiltersCount > 0 && (
+                        <View style={{
+                          position: 'absolute',
+                          top: -4,
+                          right: -4,
+                          backgroundColor: theme.accent,
+                          borderRadius: 8,
+                          minWidth: 16,
+                          height: 16,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          paddingHorizontal: 4,
+                        }}>
+                          <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>
+                            {activeFiltersCount}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity style={[styles.iconButton, { marginLeft: 8 }]} onPress={toggleTheme}>
                   <Text style={{ fontSize: 18 }}>{theme.isLight ? '🌙' : '☀️'}</Text>
                 </TouchableOpacity>
 
@@ -1030,7 +1301,6 @@ export default function App() {
                       {momentText.length}/150
                     </Text>
 
-                    {/* ⭐ Pole miejsca + GPS */}
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
                       <TextInput
                         style={[styles.locationInput, { flex: 1, color: theme.text, borderColor: theme.border }]}
@@ -1052,10 +1322,12 @@ export default function App() {
                       </TouchableOpacity>
                     </View>
 
-                    {/* ⭐ Zdjęcia: galeria + losowe */}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 10, flexWrap: 'wrap' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8, flexWrap: 'wrap' }}>
                       <TouchableOpacity onPress={pickImageFromGallery} style={[styles.mediaBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '15' }]}>
                         <Text style={{ fontSize: 14, color: theme.accent, fontWeight: 'bold' }}>📸 Galeria</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={pickImageFromCamera} style={[styles.mediaBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '15' }]}>
+                        <Text style={{ fontSize: 14, color: theme.accent, fontWeight: 'bold' }}>📷 Aparat</Text>
                       </TouchableOpacity>
                       <TouchableOpacity onPress={pickRandomImage} style={[styles.mediaBtn, { borderColor: theme.border }]}>
                         <Text style={{ fontSize: 14, color: theme.text }}>🎲 Losowe</Text>
@@ -1063,14 +1335,16 @@ export default function App() {
                       <TouchableOpacity onPress={toggleRecording}
                         style={[styles.mediaBtn, { borderColor: isRecording ? 'red' : theme.border, backgroundColor: isRecording ? '#FEE2E2' : 'transparent' }]}>
                         <Text style={{ fontSize: 14, color: isRecording ? 'red' : theme.text }}>
-                          {isRecording ? `🔴 ${recordingSeconds}s` : '🎙️ Głos'}
+                          {isRecording ? `🔴 ${recordingSeconds}s (Stop)` : '🎙️ Nagraj'}
                         </Text>
                       </TouchableOpacity>
                     </View>
 
                     {momentAudio && !isRecording && (
                       <View style={[styles.audioPill, { backgroundColor: theme.border, marginTop: 10 }]}>
-                        <Text style={{ color: theme.text, fontSize: 12 }}>✓ Nagrano ({momentAudio.duration}s)</Text>
+                        <TouchableOpacity onPress={playAudio} style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                          <Text style={{ color: theme.text, fontSize: 12 }}>▶️ Odtwórz ({momentAudio.duration}s)</Text>
+                        </TouchableOpacity>
                         <TouchableOpacity onPress={() => setMomentAudio(null)}>
                           <Text style={{ color: 'red', fontWeight: 'bold', marginLeft: 8 }}>✕</Text>
                         </TouchableOpacity>
@@ -1206,63 +1480,69 @@ export default function App() {
                           </View>
                         </View>
 
-                        <View style={{ marginBottom: 12 }}>
-                          <View style={[styles.searchBar, { borderColor: theme.border, backgroundColor: theme.card }]}>
-                            <Text style={{ fontSize: 14, marginRight: 6 }}>🔍</Text>
-                            <TextInput
-                              style={{ flex: 1, color: theme.text, paddingVertical: 6, fontSize: 14 }}
-                              placeholder="Szukaj we wpisach..."
-                              placeholderTextColor={theme.subtext}
-                              value={searchQuery} onChangeText={setSearchQuery}
-                            />
-                            {searchQuery.length > 0 && (
-                              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                                <Text style={{ color: theme.subtext, fontWeight: 'bold' }}>✕</Text>
-                              </TouchableOpacity>
+                        {activeFiltersCount > 0 && (
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                            {searchQuery.trim() && (
+                              <View style={[styles.filterPill, { backgroundColor: theme.accent, borderColor: theme.accent, flexDirection: 'row', alignItems: 'center' }]}>
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold', marginRight: 6 }}>
+                                  🔍 "{searchQuery}"
+                                </Text>
+                                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                  <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✕</Text>
+                                </TouchableOpacity>
+                              </View>
                             )}
+                            {selectedMoodFilter && (
+                              <View style={[styles.filterPill, { backgroundColor: theme.accent, borderColor: theme.accent, flexDirection: 'row', alignItems: 'center' }]}>
+                                <Text style={{ fontSize: 12, marginRight: 6 }}>{selectedMoodFilter}</Text>
+                                <TouchableOpacity onPress={() => setSelectedMoodFilter(null)}>
+                                  <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✕</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                            {selectedTagFilter && (
+                              <View style={[styles.filterPill, { backgroundColor: theme.accent, borderColor: theme.accent, flexDirection: 'row', alignItems: 'center' }]}>
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold', marginRight: 6 }}>
+                                  {selectedTagFilter}
+                                </Text>
+                                <TouchableOpacity onPress={() => setSelectedTagFilter(null)}>
+                                  <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✕</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                            {selectedLocationFilter && (
+                              <View style={[styles.filterPill, { backgroundColor: theme.accent, borderColor: theme.accent, flexDirection: 'row', alignItems: 'center' }]}>
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold', marginRight: 6 }}>
+                                  📍 {selectedLocationFilter}
+                                </Text>
+                                <TouchableOpacity onPress={() => setSelectedLocationFilter(null)}>
+                                  <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✕</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                            {onlyFavorites && (
+                              <View style={[styles.filterPill, { backgroundColor: theme.accent, borderColor: theme.accent, flexDirection: 'row', alignItems: 'center' }]}>
+                                <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold', marginRight: 6 }}>⭐</Text>
+                                <TouchableOpacity onPress={() => setOnlyFavorites(false)}>
+                                  <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✕</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                            <TouchableOpacity
+                              onPress={() => {
+                                setSearchQuery('');
+                                setSelectedMoodFilter(null);
+                                setSelectedTagFilter(null);
+                                setSelectedLocationFilter(null);
+                                setOnlyFavorites(false);
+                              }}
+                              style={[styles.filterPill, { backgroundColor: 'transparent', borderColor: theme.border }]}
+                            >
+                              <Text style={{ color: theme.subtext, fontSize: 11, fontWeight: 'bold' }}>Wyczyść</Text>
+                            </TouchableOpacity>
                           </View>
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-                            <TouchableOpacity
-                              onPress={() => setOnlyFavorites(p => !p)}
-                              style={[styles.filterPill, { backgroundColor: onlyFavorites ? theme.accent : theme.card, borderColor: theme.border }]}
-                            >
-                              <Text style={{ color: onlyFavorites ? '#FFF' : theme.text, fontSize: 12, fontWeight: 'bold' }}>⭐ Ulubione</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => { setSelectedMoodFilter(null); setSelectedTagFilter(null); setSelectedLocationFilter(null); }}
-                              style={[styles.filterPill, {
-                                backgroundColor: (!selectedMoodFilter && !selectedTagFilter && !selectedLocationFilter) ? theme.accent : theme.card,
-                                borderColor: theme.border,
-                              }]}
-                            >
-                              <Text style={{ color: (!selectedMoodFilter && !selectedTagFilter && !selectedLocationFilter) ? '#FFF' : theme.text, fontSize: 12, fontWeight: 'bold' }}>Wszystkie</Text>
-                            </TouchableOpacity>
-                            {EMOTIONS.map(e => (
-                              <TouchableOpacity key={e}
-                                onPress={() => setSelectedMoodFilter(p => p === e ? null : e)}
-                                style={[styles.filterPill, { backgroundColor: selectedMoodFilter === e ? theme.accent : theme.card, borderColor: theme.border }]}
-                              >
-                                <Text style={{ fontSize: 12 }}>{e}</Text>
-                              </TouchableOpacity>
-                            ))}
-                            {availableTags.map(tag => (
-                              <TouchableOpacity key={tag}
-                                onPress={() => setSelectedTagFilter(p => p === tag ? null : tag)}
-                                style={[styles.filterPill, { backgroundColor: selectedTagFilter === tag ? theme.accent : theme.accent + '22', borderColor: theme.border }]}
-                              >
-                                <Text style={{ color: selectedTagFilter === tag ? '#FFF' : theme.accent, fontSize: 12, fontWeight: 'bold' }}>{tag}</Text>
-                              </TouchableOpacity>
-                            ))}
-                            {availableLocations.map(loc => (
-                              <TouchableOpacity key={loc}
-                                onPress={() => setSelectedLocationFilter(p => p === loc ? null : loc)}
-                                style={[styles.filterPill, { backgroundColor: selectedLocationFilter === loc ? theme.accent : theme.card, borderColor: theme.border }]}
-                              >
-                                <Text style={{ color: selectedLocationFilter === loc ? '#FFF' : theme.text, fontSize: 12, fontWeight: 'bold' }}>📍 {loc}</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </ScrollView>
-                        </View>
+                        )}
+
                         <Text style={{ color: theme.text, fontWeight: 'bold', fontSize: 16, marginBottom: 4 }}>
                           {totalFiltered === moments.length ? 'Twoje momenty' : `Wyniki (${totalFiltered})`}
                         </Text>
@@ -1418,38 +1698,26 @@ export default function App() {
             )}
 
             {currentTab === 'tree' && (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100, alignItems: 'center' }}>
-                <Text style={{ color: theme.text, fontSize: 24, fontWeight: '900', marginBottom: 8, alignSelf: 'flex-start' }}>Twój Ogród</Text>
-                <Text style={{ color: theme.subtext, fontSize: 14, marginBottom: 30, alignSelf: 'flex-start', lineHeight: 22 }}>
-                  Każdy moment wdzięczności podlewa Twój ekosystem.
-                </Text>
-                <View style={[dynamicStyles.card, { width: '100%', alignItems: 'center', paddingVertical: 40 }]}>
-                  <Text style={{ fontSize: 100, marginBottom: 20 }}>{stats.currentTree.icon}</Text>
-                  <Text style={{ color: theme.text, fontSize: 22, fontWeight: 'bold', marginBottom: 8 }}>{stats.currentTree.name}</Text>
-                  <Text style={{ color: theme.subtext, fontSize: 13, textAlign: 'center', paddingHorizontal: 20, lineHeight: 20 }}>{stats.currentTree.desc}</Text>
-                </View>
-                {stats.nextTree && (
-                  <View style={[dynamicStyles.card, { width: '100%' }]}>
-                    <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold', marginBottom: 10 }}>
-                      Do kolejnego etapu ({stats.nextTree.icon}): <Text style={{ color: theme.accent }}>{stats.totalEntries} / {stats.nextTree.min}</Text>
-                    </Text>
-                    <View style={{ width: '100%', height: 10, backgroundColor: theme.border, borderRadius: 5, overflow: 'hidden' }}>
-                      <View style={{ width: `${stats.treeProgress * 100}%`, height: '100%', backgroundColor: theme.accent }} />
-                    </View>
-                  </View>
-                )}
-              </ScrollView>
+              <Garden
+                moments={moments}
+                waterings={waterings}
+                theme={theme}
+                styles={styles}
+                dynamicStyles={dynamicStyles}
+                currentStreak={currentStreak}
+                onWater={waterGarden}
+              />
             )}
 
           </View>
 
-          {/* ⭐ NAPRAWIONY pasek nawigacji - paddingBottom dla Androida */}
+          {/* ⭐ Pasek nawigacji z SafeAreaInsets */}
           <View style={[
             styles.bottomNavBar,
             {
               backgroundColor: theme.bg,
               borderTopColor: theme.border,
-              paddingBottom: Platform.OS === 'android' ? 34 : 14,
+              paddingBottom: Math.max(insets.bottom, 12),
               paddingTop: 12,
             }
           ]}>
@@ -1471,6 +1739,25 @@ export default function App() {
       </KeyboardAvoidingView>
 
       <Toast message={toastMessage} theme={theme} actionLabel={toastAction?.label} onAction={toastAction?.fn} />
+
+      {/* ⭐ NOWE: Modal wyszukiwania */}
+      <SearchModal
+        visible={isSearchModalVisible}
+        onClose={() => setIsSearchModalVisible(false)}
+        theme={theme}
+        allMoments={moments}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        selectedMoodFilter={selectedMoodFilter}
+        setSelectedMoodFilter={setSelectedMoodFilter}
+        selectedTagFilter={selectedTagFilter}
+        setSelectedTagFilter={setSelectedTagFilter}
+        selectedLocationFilter={selectedLocationFilter}
+        setSelectedLocationFilter={setSelectedLocationFilter}
+        onlyFavorites={onlyFavorites}
+        setOnlyFavorites={setOnlyFavorites}
+        styles={styles}
+      />
 
       {/* ACTION MENU */}
       <Modal visible={!!actionMoment} transparent animationType="fade" onRequestClose={() => setActionMoment(null)}>
@@ -1787,6 +2074,9 @@ export default function App() {
             <TouchableOpacity style={[styles.mainButton, dynamicStyles.button, { marginBottom: 10 }]} onPress={shareGeneratedCard}>
               <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Udostępnij jako Karta</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={[styles.mainButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.border, marginBottom: 10 }]} onPress={shareViaSystem}>
+              <Text style={{ color: theme.text, fontWeight: 'bold' }}>📤 Udostępnij systemowo</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={[styles.mainButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.border, marginBottom: 12 }]} onPress={shareAnonymousCard}>
               <Text style={{ color: theme.text, fontWeight: 'bold' }}>🕊️ Cichy Anioł (anonimowo)</Text>
             </TouchableOpacity>
@@ -1808,21 +2098,38 @@ export default function App() {
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={[dynamicStyles.card, { paddingVertical: 12, marginBottom: 12 }]}>
-                <Text style={{ color: theme.text, fontWeight: 'bold', marginBottom: 8 }}>Godzina przypomnienia</Text>
-                <View style={styles.row}>
-                  <TextInput style={[styles.timeInput, { color: theme.text, borderColor: theme.border }]} value={notifHour} onChangeText={setNotifHour} keyboardType="number-pad" maxLength={2} />
-                  <Text style={{ color: theme.text, fontSize: 18, marginHorizontal: 4 }}>:</Text>
-                  <TextInput style={[styles.timeInput, { color: theme.text, borderColor: theme.border }]} value={notifMinute} onChangeText={setNotifMinute} keyboardType="number-pad" maxLength={2} />
-                  <TouchableOpacity style={[styles.saveTimeBtn, { backgroundColor: theme.accent, marginLeft: 10 }]} onPress={handleSaveNotifTime}>
-                    <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>Zapisz</Text>
+              {/* Powiadomienia */}
+              <View style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.text, fontWeight: 'bold' }}>🔔 Powiadomienia</Text>
+                    <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>
+                      {dailyNotifEnabled ? `Włączone o ${notifHour}:${notifMinute}` : 'Wyłączone'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={toggleDailyNotifications}>
+                    <Text style={{ fontSize: 24 }}>{dailyNotifEnabled ? '✅' : '⚪'}</Text>
                   </TouchableOpacity>
                 </View>
+                {dailyNotifEnabled && (
+                  <View style={styles.row}>
+                    <TextInput style={[styles.timeInput, { color: theme.text, borderColor: theme.border }]} value={notifHour} onChangeText={setNotifHour} keyboardType="number-pad" maxLength={2} />
+                    <Text style={{ color: theme.text, fontSize: 18, marginHorizontal: 4 }}>:</Text>
+                    <TextInput style={[styles.timeInput, { color: theme.text, borderColor: theme.border }]} value={notifMinute} onChangeText={setNotifMinute} keyboardType="number-pad" maxLength={2} />
+                    <TouchableOpacity style={[styles.saveTimeBtn, { backgroundColor: theme.accent, marginLeft: 10 }]} onPress={handleSaveNotifTime}>
+                      <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>Zapisz</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
+
+              {/* PIN */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]} onPress={() => setIsPinModalVisible(true)}>
-                <Text style={{ color: theme.text, fontWeight: 'bold' }}>Zabezpieczenie PIN</Text>
+                <Text style={{ color: theme.text, fontWeight: 'bold' }}>🔒 Zabezpieczenie PIN</Text>
                 <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>{savedPin ? 'PIN aktywny' : 'Brak blokady'}</Text>
               </TouchableOpacity>
+
+              {/* Biometria */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]} onPress={toggleBiometric}>
                 <View>
                   <Text style={{ color: theme.text, fontWeight: 'bold' }}>🔐 Biometria</Text>
@@ -1832,21 +2139,107 @@ export default function App() {
                 </View>
                 <Text style={{ fontSize: 20 }}>{biometricEnabled ? '✓' : '○'}</Text>
               </TouchableOpacity>
+
+              {/* Motyw */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]} onPress={() => setIsThemePickerVisible(true)}>
-                <Text style={{ color: theme.text, fontWeight: 'bold' }}>Motyw UI</Text>
+                <Text style={{ color: theme.text, fontWeight: 'bold' }}>🎨 Motyw UI</Text>
                 <Text style={{ color: theme.accent, fontWeight: 'bold' }}>{theme.name} {theme.icon} ▾</Text>
               </TouchableOpacity>
+
+              {/* ⭐ Changelog */}
+              <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, borderColor: theme.accent, borderWidth: 2 }]} onPress={() => { setIsSettingsVisible(false); setIsChangelogVisible(true); }}>
+                <Text style={{ color: theme.text, fontWeight: 'bold' }}>📜 Co nowego?</Text>
+                <Text style={{ color: theme.accent, fontWeight: 'bold' }}>Wersja {CURRENT_VERSION} ▾</Text>
+              </TouchableOpacity>
+
+              {/* Export */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, marginBottom: 8 }]} onPress={exportDataJSON}>
                 <Text style={{ color: theme.accent, textAlign: 'center', fontWeight: 'bold' }}>Eksportuj jako JSON</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, marginBottom: 12 }]} onPress={exportDataText}>
                 <Text style={{ color: theme.accent, textAlign: 'center', fontWeight: 'bold' }}>📝 Eksportuj jako tekst</Text>
               </TouchableOpacity>
+
+              {/* Reset */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, borderColor: 'red', borderWidth: 1 }]} onPress={resetApp}>
                 <Text style={{ color: 'red', fontWeight: 'bold', textAlign: 'center' }}>Resetuj Aplikację</Text>
               </TouchableOpacity>
               <Text style={{ textAlign: 'center', color: theme.subtext, marginTop: 12, fontSize: 10 }}>WERSJA [{VERSION}]</Text>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ⭐ CHANGELOG MODAL */}
+      <Modal visible={isChangelogVisible} animationType="slide" transparent onRequestClose={() => setIsChangelogVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.bg, borderColor: theme.border, borderWidth: theme.borderWidth, maxHeight: '90%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={[styles.title, { color: theme.text, fontSize: 20 }]}>📜 Co nowego?</Text>
+              <TouchableOpacity onPress={() => setIsChangelogVisible(false)}>
+                <Text style={{ color: theme.subtext, fontSize: 20, fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {CHANGELOG.map((entry, idx) => (
+                <View key={entry.version} style={[dynamicStyles.card, entry.isCurrent && { borderColor: theme.accent, borderWidth: 2 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <Text style={{ color: theme.text, fontWeight: '900', fontSize: 18 }}>
+                      v{entry.version}
+                    </Text>
+                    {entry.isCurrent && (
+                      <View style={{ backgroundColor: theme.accent, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                        <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>AKTUALNA</Text>
+                      </View>
+                    )}
+                  </View>
+                  {entry.badge && (
+                    <Text style={{ color: theme.accent, fontWeight: 'bold', fontSize: 12, marginBottom: 4 }}>
+                      {entry.badge}
+                    </Text>
+                  )}
+                  <Text style={{ color: theme.subtext, fontSize: 11, marginBottom: 12 }}>
+                    {entry.date}
+                  </Text>
+
+                  {entry.changes.added?.length > 0 && (
+                    <View style={{ marginBottom: 10 }}>
+                      <Text style={{ color: '#10B981', fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>✨ Dodano</Text>
+                      {entry.changes.added.map((item, i) => (
+                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>
+                          • {item}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {entry.changes.fixed?.length > 0 && (
+                    <View style={{ marginBottom: 10 }}>
+                      <Text style={{ color: '#F59E0B', fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>🐛 Naprawiono</Text>
+                      {entry.changes.fixed.map((item, i) => (
+                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>
+                          • {item}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {entry.changes.changed?.length > 0 && (
+                    <View>
+                      <Text style={{ color: '#3B82F6', fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>🔄 Zmieniono</Text>
+                      {entry.changes.changed.map((item, i) => (
+                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>
+                          • {item}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={[styles.mainButton, { backgroundColor: theme.accent, marginTop: 12 }]} onPress={() => setIsChangelogVisible(false)}>
+              <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Zamknij</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1921,4 +2314,3 @@ export default function App() {
     </SafeAreaView>
   );
 }
-
