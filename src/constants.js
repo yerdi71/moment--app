@@ -1,7 +1,7 @@
 // ─── KONFIGURACJA ───
-export const VERSION = '0.7.3';
-export const INITIAL_VISIBLE = 3;   // ⭐ ZMIANA: 3 zamiast 20 (błąd #3)
-export const LOAD_STEP = 8;         // ⭐ ZMIANA: 8 zamiast 20 (błąd #3)
+export const VERSION = '0.7.4';
+export const INITIAL_VISIBLE = 3;
+export const LOAD_STEP = 8;
 
 export const STORAGE_KEYS = {
   moments: '@moje_momenty',
@@ -12,7 +12,11 @@ export const STORAGE_KEYS = {
   capsules: '@capsules',
   backupPrefix: '@backup_',
   affirmationSeen: '@affirmation_seen',
-  biometricEnabled: '@biometric_enabled',  // ⭐ NOWE
+  biometricEnabled: '@biometric_enabled',
+  waterings: '@moje_podlewania',           // ⭐ NOWE
+  notificationDaily: '@notif_daily_enabled', // ⭐ NOWE
+  notificationHour: '@notif_daily_hour',   // ⭐ NOWE
+  notificationMinute: '@notif_daily_minute', // ⭐ NOWE
 };
 
 // ─── EMOCJE ───
@@ -24,8 +28,7 @@ export const SAMPLE_IMAGES = [
   'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=500',
 ];
 
-// ─── MOTYWY (tylko 2!) ───
-// ⭐ ZMIANA: usunięto system, neo-brutalism, hand-drawn, dark-neon (błąd #5)
+// ─── MOTYWY (tylko 2) ───
 export const UI_THEMES = {
   'soft-minimal': {
     id: 'soft-minimal',
@@ -59,6 +62,7 @@ export const UI_THEMES = {
 
 export const LIGHT_THEMES = ['soft-minimal'];
 
+// ─── KARTY DO SHARE ───
 export const CARD_BACKGROUNDS = [
   { id: 'purple', name: 'Lawendowy', bg: '#8B5CF6', text: '#FFFFFF', sub: '#DDD6FE', border: '#A78BFA' },
   { id: 'dark', name: 'Ciemny', bg: '#18181B', text: '#FFFFFF', sub: '#A1A1AA', border: '#3F3F46' },
@@ -67,17 +71,17 @@ export const CARD_BACKGROUNDS = [
   { id: 'minimal', name: 'Czysta Biel', bg: '#FFFFFF', text: '#111827', sub: '#6B7280', border: '#E5E7EB' },
 ];
 
-// ─── DRZEWKO ───
+// ─── DRZEWKO (etapy wzrostu) ───
 export const TREE_STAGES = [
   { min: 100, icon: '🌳✨', name: 'Magiczne Drzewo', desc: 'Stworzyłeś niesamowity ekosystem pełen wdzięczności i miłości.' },
   { min: 50, icon: '🌲', name: 'Majestatyczne Bonsai', desc: 'Zapuściłeś potężne korzenie. Twoja praktyka stała się nawykiem.' },
-  { min: 25, icon: '🌳', name: 'Rozłożyste Drzewo', desc: 'Drzewo rośnie w siłę, podobnie jak Twoje pozytywne myślenie.' },
+  { min: 25, icon: '🌳', name: 'Rozłożyste Drzewo', desc: 'Drzewko rośnie w siłę, podobnie jak Twoje pozytywne myślenie.' },
   { min: 10, icon: '🪴', name: 'Kwitnąca Roślina', desc: 'Pielęgnujesz swoje myśli, a one zaczynają pięknie kwitnąć.' },
   { min: 3, icon: '🌿', name: 'Młody Pęd', desc: 'Z nasionka kiełkuje pierwsza roślina. Zadbaj o nią.' },
   { min: 0, icon: '🌱', name: 'Zasiane Nasionko', desc: 'Każda wielka zmiana zaczyna się od małego kroku.' },
 ];
 
-// ─── ODZNAKI ───
+// ─── ODZNAKI GŁÓWNE (ogólne) ───
 export const ACHIEVEMENTS_LIST = [
   { id: 'first_step', title: 'Pierwszy Krok', desc: 'Dodaj swój pierwszy moment wdzięczności.', icon: '🌱', check: (m, s) => m.length >= 1 },
   { id: 'streak_3', title: 'Mała Passa', desc: 'Utrzymaj 3-dniową passę.', icon: '🔥', check: (m, s) => s >= 3 },
@@ -90,6 +94,89 @@ export const ACHIEVEMENTS_LIST = [
   { id: 'traveler', title: 'Podróżnik', desc: 'Dodaj wpis z 3 różnych miejsc.', icon: '🗺️', check: (m) => new Set(m.map(x => x.location).filter(Boolean)).size >= 3 },
   { id: 'gallery_master', title: 'Fotograf', desc: 'Dodaj zdjęcie z galerii.', icon: '🖼️', check: (m) => m.some(x => x.source === 'gallery') },
   { id: 'gps_master', title: 'Odkrywca', desc: 'Użyj GPS do oznaczenia miejsca.', icon: '🧭', check: (m) => m.some(x => x.source === 'gps') },
+  { id: 'camera_master', title: 'Migawka', desc: 'Zrób zdjęcie w aplikacji.', icon: '📸', check: (m) => m.some(x => x.source === 'camera') },
+];
+
+// ═══════════════════════════════════════════
+// ─── NOWE: ODZNAKI OGRODU ───
+// ═══════════════════════════════════════════
+export const GARDEN_ACHIEVEMENTS = [
+  {
+    id: 'gardener',
+    title: 'Ogrodnik',
+    desc: 'Podlej drzewko 7 dni z rzędu.',
+    icon: '💧',
+    check: (m, waterings) => {
+      if (!waterings || waterings.length === 0) return false;
+      const sorted = [...waterings].sort().reverse();
+      let streak = 1;
+      const today = new Date();
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const yest = new Date();
+      yest.setDate(yest.getDate() - 1);
+      const yesterdayKey = `${yest.getFullYear()}-${String(yest.getMonth() + 1).padStart(2, '0')}-${String(yest.getDate()).padStart(2, '0')}`;
+      if (sorted[0] !== todayKey && sorted[0] !== yesterdayKey) return false;
+      let currDate = new Date(sorted[0] === todayKey ? Date.now() : yest.getTime());
+      for (let i = 1; i < sorted.length; i++) {
+        currDate.setDate(currDate.getDate() - 1);
+        const expectedKey = `${currDate.getFullYear()}-${String(currDate.getMonth() + 1).padStart(2, '0')}-${String(currDate.getDate()).padStart(2, '0')}`;
+        if (sorted[i] === expectedKey) streak++;
+        else break;
+      }
+      return streak >= 7;
+    },
+  },
+  {
+    id: 'spring',
+    title: 'Wiosna',
+    desc: 'Napisz 30 momentów w jednym miesiącu.',
+    icon: '🌸',
+    check: (m) => {
+      if (!m || m.length < 30) return false;
+      const now = new Date();
+      const monthMoments = m.filter(x => {
+        const d = new Date(x.timestamp);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      });
+      return monthMoments.length >= 30;
+    },
+  },
+  {
+    id: 'fruit',
+    title: 'Owoc',
+    desc: 'Ukończ 10 wpisów z pełnymi mediami (zdjęcie + głos + miejsce).',
+    icon: '🍎',
+    check: (m) => {
+      if (!m) return false;
+      const fullMedia = m.filter(x => x.imageUri && x.audioNote && x.location);
+      return fullMedia.length >= 10;
+    },
+  },
+  {
+    id: 'caretaker',
+    title: 'Opiekun',
+    desc: 'Utrzymaj drzewko kwitnące 14 dni z rzędu.',
+    icon: '🌳',
+    check: (m) => {
+      if (!m || m.length < 14) return false;
+      const dateKeys = [...new Set(m.map(x => x.dateKey || `${new Date(x.timestamp).getFullYear()}-${String(new Date(x.timestamp).getMonth() + 1).padStart(2, '0')}-${String(new Date(x.timestamp).getDate()).padStart(2, '0')}`))].sort().reverse();
+      const today = new Date();
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const yest = new Date();
+      yest.setDate(yest.getDate() - 1);
+      const yesterdayKey = `${yest.getFullYear()}-${String(yest.getMonth() + 1).padStart(2, '0')}-${String(yest.getDate()).padStart(2, '0')}`;
+      if (dateKeys[0] !== todayKey && dateKeys[0] !== yesterdayKey) return false;
+      let streak = 1;
+      let currDate = new Date(dateKeys[0] === todayKey ? Date.now() : yest.getTime());
+      for (let i = 1; i < dateKeys.length; i++) {
+        currDate.setDate(currDate.getDate() - 1);
+        const expectedKey = `${currDate.getFullYear()}-${String(currDate.getMonth() + 1).padStart(2, '0')}-${String(currDate.getDate()).padStart(2, '0')}`;
+        if (dateKeys[i] === expectedKey) streak++;
+        else break;
+      }
+      return streak >= 14;
+    },
+  },
 ];
 
 // ─── TREŚCI CODZIENNE ───
