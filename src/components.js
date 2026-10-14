@@ -21,10 +21,12 @@ export const Toast = memo(({ message, theme, actionLabel, onAction }) => {
 });
 
 // ─── KARTA MOMENTU ───
-export const MomentCard = memo(({ item, theme, cardStyle, onMenu }) => {
+export const MomentCard = memo(({ item, theme, cardStyle, onMenu, onPlayAudio, isPlayingAudio }) => {
   const [visible, setVisible] = useState(false);
   useEffect(() => { const t = setTimeout(() => setVisible(true), 20); return () => clearTimeout(t); }, []);
   const animStyle = { opacity: visible ? 1 : 0, transform: [{ translateY: visible ? 0 : 14 }] };
+
+  const hasAudio = !!(item.audioNote && item.audioNote.uri);
 
   return (
     <TouchableOpacity
@@ -40,16 +42,43 @@ export const MomentCard = memo(({ item, theme, cardStyle, onMenu }) => {
           <Text style={{ color: theme.subtext, fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase' }}>{item.date}</Text>
           {item.isFavorite && <Text style={{ marginLeft: 6 }}>⭐</Text>}
         </View>
+
         {item.imageUri && <Image source={{ uri: item.imageUri }} style={styles.listImage} />}
+
         {!!item.location && (
           <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '700', marginTop: 6 }}>📍 {item.location}</Text>
         )}
-        {item.audioNote && (
-          <View style={[styles.audioPill, { backgroundColor: theme.border }]}>
-            <Text style={{ fontSize: 14, marginRight: 6 }}>🎙️</Text>
-            <Text style={{ color: theme.subtext, fontSize: 11, fontWeight: 'bold' }}>{item.audioNote.duration || 0}s</Text>
-          </View>
+
+        {hasAudio && (
+          <TouchableOpacity
+            onPress={() => onPlayAudio && onPlayAudio()}
+            activeOpacity={0.7}
+            style={[
+              styles.audioPill,
+              {
+                backgroundColor: isPlayingAudio ? theme.accent : theme.border,
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                marginTop: 8,
+                borderRadius: 20,
+              }
+            ]}
+          >
+            <Text style={{ fontSize: 14, marginRight: 6 }}>
+              {isPlayingAudio ? '⏸️' : '▶️'}
+            </Text>
+            <Text style={{
+              color: isPlayingAudio ? '#FFF' : theme.text,
+              fontSize: 12,
+              fontWeight: 'bold',
+            }}>
+              {isPlayingAudio ? 'Odtwarzanie...' : `Nagranie (${item.audioNote.duration || 0}s)`}
+            </Text>
+          </TouchableOpacity>
         )}
+
         <Text style={{ color: theme.text, fontSize: 15, lineHeight: 22, marginTop: 6 }}>{item.text}</Text>
       </View>
       <View style={{ justifyContent: 'center', alignItems: 'center', paddingLeft: 6 }}>
