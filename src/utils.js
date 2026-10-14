@@ -1,5 +1,8 @@
 import { Platform, Vibration } from 'react-native';
-import { EMOTIONS, STOPWORDS, VIBE_DESCRIPTIONS, TREE_STAGES, ACHIEVEMENTS_LIST } from './constants';
+import {
+  EMOTIONS, STOPWORDS, VIBE_DESCRIPTIONS, TREE_STAGES,
+  ACHIEVEMENTS_LIST, GARDEN_ACHIEVEMENTS,
+} from './constants';
 
 // ─── FORMATOWANIE DAT ───
 export const formatDateToKey = (dateObj) => {
@@ -12,11 +15,11 @@ export const vibrate = (pattern = 20) => {
   try {
     if (Platform.OS !== 'web') Vibration.vibrate(pattern);
   } catch (_error) {
-    // Wibracje niedostępne (np. web preview) – pomijamy
+    // Wibracje niedostępne – pomijamy
   }
 };
 
-// ─── DZIEŃ ROKU (dla promptów/cytatów) ───
+// ─── DZIEŃ ROKU ───
 export const getDayOfYear = (d = new Date()) => {
   const start = new Date(d.getFullYear(), 0, 0);
   return Math.floor((d - start) / 86400000);
@@ -196,4 +199,147 @@ export const computeNostalgiaBuckets = (moments) => {
     return moments.filter(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key);
   };
   return { week: findOn(7), month: findOn(30), year: findOn(365) };
+};
+
+// ═══════════════════════════════════════════
+// ─── SYSTEM OGRODU ───
+// ═══════════════════════════════════════════
+
+// ─── Wzrost drzewka (1 pkt/wpisz + bonusy) ───
+export const computeGardenGrowth = (moments) => {
+  if (!moments || moments.length === 0) {
+    return { total: 0, base: 0, bonus: 0, bonuses: { photos: 0, audio: 0, locations: 0, streaks: 0 }, maxStreak: 0 };
+  }
+
+  let base = moments.length;
+  const bonuses = { photos: 0, audio: 0, locations: 0, streaks: 0 };
+
+  moments.forEach(m => {
+    if (m.imageUri) bonuses.photos += 1;
+    if (m.audioNote) bonuses.audio += 1;
+    if (m.location) bonuses.locations += 1;
+  });
+
+  // Bonus za najdłuższą passę (każde 7 dni = +10 pkt)
+  const dateKeys = [...new Set(moments.map(m => m.dateKey || formatDateToKey(new Date(m.timestamp))))].sort();
+  let maxStreak = 0;
+  let currentStreak = 0;
+  let prevDate = null;
+
+  dateKeys.forEach(key => {
+    const current = new Date(key);
+    if (prevDate) {
+      const diffDays = Math.round((current - prevDate) / 86400000);
+      currentStreak = diffDays === 1 ? currentStreak + 1 : 1;
+    } else {
+      currentStreak = 1;
+    }
+    if (currentStreak > maxStreak) maxStreak = currentStreak;
+    prevDate = current;
+  });
+
+  bonuses.streaks = Math.floor(maxStreak / 7) * 10;
+
+  const bonusTotal = bonuses.photos + bonuses.audio + bonuses.locations + bonuses.streaks;
+  const total = base + bonusTotal;
+
+  return { total, base, bonus: bonusTotal, bonuses, maxStreak };
+};
+
+// ─── Stan drzewka ───
+export const computeGardenState = (moments) => {
+  const todayKey = formatDateToKey(new Date());
+
+  if (!moments || moments.length === 0) {
+    return {
+      id: 'empty',
+      emoji: '🌱',
+      label: 'Zasiane Nasionko',
+      desc: 'Dodaj swój pierwszy wpis, aby zacząć rosnąć.',
+      color: '#8B5CF6',
+      daysSinceLastEntry: null,
+    };
+  }
+
+  const sorted = [...moments].sort((a, b) => b.timestamp - a.timestamp);
+  const lastEntry = sorted[0];
+  const lastKey = lastEntry.dateKey || formatDateToKey(new Date(lastEntry.timestamp));
+
+  const lastDate = new Date(lastKey);
+  const today = new Date(todayKey);
+  const daysSince = Math.round((today - lastDate) / 86400000);
+
+  if (daysSince <= 0) {
+    return {
+      id: 'blooming', emoji: '🌸', label: 'Kwitnące',
+      desc: 'Twoje drzewko jest dziś szczęśliwe!',
+      color: '#EC4899', daysSinceLastEntry: 0,
+    };
+  } else if (daysSince <= 2) {
+    return {
+      id: 'healthy', emoji: '🌿', label: 'Zdrowe',
+      desc: 'Drzewko rośnie w siłę.',
+      color: '#10B981', daysSinceLastEntry: daysSince,
+    };
+  } else if (daysSince <= 6) {
+    return {
+      id: 'thirsty', emoji: '🌾', label: 'Spragnione',
+      desc: 'Drzewko czeka na wodę. Dodaj wpis!',
+      color: '#F59E0B', daysSinceLastEntry: daysSince,
+    };
+  } else {
+    return {
+      id: 'sad', emoji: '🍂', label: 'Zasmucone',
+      desc: 'Trochę zwiędło, ale nie umarło. Wróć do pisania!',
+      color: '#92400E', daysSinceLastEntry: daysSince,
+    };
+  }
+};
+
+// ─── Podlewanie ───
+export const isWateredToday = (waterings) => {
+  if (!waterings || waterings.length === 0) return false;
+  const todayKey = formatDateToKey(new Date());
+  return waterings.includes(todayKey);
+};
+
+export const computeWateringStreak = (waterings) => {
+  if (!waterings || waterings.length === 0) return 0;
+  const sorted = [...waterings].sort().reverse();
+  const todayKey = formatDateToKey(new Date());
+  const yestDate = new Date();
+  yestDate.setDate(yestDate.getDate() - 1);
+  const yesterdayKey = formatDateToKey(yestDate);
+  if (sorted[0] !== todayKey && sorted[0] !== yesterdayKey) return 0;
+  let streak = 1;
+  let currentDate = new Date(sorted[0] === todayKey ? Date.now() : yestDate.getTime());
+  for (let i = 1; i < sorted.length; i++) {
+    currentDate.setDate(currentDate.getDate() - 1);
+    const expectedKey = formatDateToKey(currentDate);
+    if (sorted[i] === expectedKey) streak++;
+    else break;
+  }
+  return streak;
+};
+
+// ─── Etapy drzewka ───
+export const getCurrentTreeStage = (growth) => {
+  return TREE_STAGES.find(t => growth >= t.min) || TREE_STAGES[TREE_STAGES.length - 1];
+};
+
+export const getNextTreeStage = (growth) => {
+  for (let i = TREE_STAGES.length - 1; i >= 0; i--) {
+    if (TREE_STAGES[i].min > growth) return TREE_STAGES[i];
+  }
+  return null;
+};
+
+// ─── Liczba dni od ostatniego wpisu ───
+export const getDaysSinceLastEntry = (moments) => {
+  if (!moments || moments.length === 0) return null;
+  const sorted = [...moments].sort((a, b) => b.timestamp - a.timestamp);
+  const lastKey = sorted[0].dateKey || formatDateToKey(new Date(sorted[0].timestamp));
+  const lastDate = new Date(lastKey);
+  const today = new Date(formatDateToKey(new Date()));
+  return Math.round((today - lastDate) / 86400000);
 };
