@@ -2,9 +2,13 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   View, Text, TouchableOpacity, SafeAreaView,
   TextInput, Platform, StatusBar, KeyboardAvoidingView,
-  SectionList, Alert, Modal, ScrollView, Image, Share, useColorScheme
+  SectionList, Alert, Modal, ScrollView, Image, Share, useColorScheme,
+  Vibration, ActivityIndicator
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 import {
   VERSION, INITIAL_VISIBLE, LOAD_STEP, STORAGE_KEYS,
@@ -29,6 +33,7 @@ export default function App() {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(null);
 
   const [savedPin, setSavedPin] = useState(null);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [enteredPin, setEnteredPin] = useState('');
   const [newPinInput, setNewPinInput] = useState('');
@@ -46,12 +51,14 @@ export default function App() {
   const [momentMood, setMomentMood] = useState('😊');
   const [momentAudio, setMomentAudio] = useState(null);
   const [momentLocation, setMomentLocation] = useState('');
+  const [momentSource, setMomentSource] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isLoadingGps, setIsLoadingGps] = useState(false);
 
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [isThemePickerVisible, setIsThemePickerVisible] = useState(false);
-  const [currentThemeId, setCurrentThemeId] = useState('system');
+  const [currentThemeId, setCurrentThemeId] = useState('minimal-dark');
   const [notifHour, setNotifHour] = useState('20');
   const [notifMinute, setNotifMinute] = useState('00');
 
@@ -93,7 +100,6 @@ export default function App() {
 
   const [pendingUndo, setPendingUndo] = useState(null);
   const undoTimeout = useRef(null);
-
   const [toastMessage, setToastMessage] = useState(null);
   const [toastAction, setToastAction] = useState(null);
   const toastTimer = useRef(null);
@@ -110,11 +116,8 @@ export default function App() {
   const hasMomentToday = !!todaysMoment;
 
   const theme = useMemo(() => {
-    if (currentThemeId === 'system') {
-      return systemScheme === 'light' ? UI_THEMES['soft-minimal'] : UI_THEMES['minimal-dark'];
-    }
     return UI_THEMES[currentThemeId] || UI_THEMES['minimal-dark'];
-  }, [currentThemeId, systemScheme]);
+  }, [currentThemeId]);
 
   const themeList = useMemo(() => Object.values(UI_THEMES), []);
 
@@ -130,43 +133,99 @@ export default function App() {
 
   const currentStreak = useMemo(() => calculateStreak(moments), [moments]);
 
+  const toggleTheme = useCallback(() => {
+    const nextId = currentThemeId === 'soft-minimal' ? 'minimal-dark' : 'soft-minimal';
+    setCurrentThemeId(nextId);
+    vibrate(15);
+    showToast(`Motyw: ${UI_THEMES[nextId].name}`);
+    AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify({
+      themeId: nextId, notifHour, notifMinute,
+    }));
+  }, [currentThemeId, notifHour, notifMinute, showToast]);
+
+  const tryBiometricUnlock = useCallback(async () => {
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !isEnrolled) return false;
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Odblokuj Jeden Moment',
+        fallbackLabel: 'Użyj PIN',
+        cancelLabel: 'Anuluj',
+        disableDeviceFallback: false,
+      });
+      if (result.success) {
+        vibrate(30);
+        setIsLocked(false);
+        setEnteredPin('');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('biometric', e);
+      return false;
+    }
+  }, []);
+
   const loadAppData = useCallback(async () => {
     try {
-      const [storedMoments, onboardingStatus, storedSettings, storedPin, storedCapsules] = await Promise.all([
+      const [storedMoments, onboardingStatus, storedSettings, storedPin, storedCapsules, storedBiometric] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.moments),
         AsyncStorage.getItem(STORAGE_KEYS.onboarding),
         AsyncStorage.getItem(STORAGE_KEYS.settings),
         AsyncStorage.getItem(STORAGE_KEYS.appPin),
         AsyncStorage.getItem(STORAGE_KEYS.capsules),
+        AsyncStorage.getItem(STORAGE_KEYS.biometricEnabled),
       ]);
       if (storedMoments) setMoments(JSON.parse(storedMoments));
       if (storedCapsules) setCapsules(JSON.parse(storedCapsules));
       setHasCompletedOnboarding(onboardingStatus === 'true');
-      if (storedPin) { setSavedPin(storedPin); setIsLocked(true); }
+
+      if (storedPin) {
+        setSavedPin(storedPin);
+        setIsLocked(true);
+      }
+
+      const bioEnabled = storedBiometric === 'true';
+      setBiometricEnabled(bioEnabled);
+
       if (storedSettings) {
         const s = JSON.parse(storedSettings);
         if (s.themeId && UI_THEMES[s.themeId]) setCurrentThemeId(s.themeId);
+        else setCurrentThemeId(systemScheme === 'light' ? 'soft-minimal' : 'minimal-dark');
         if (s.notifHour) setNotifHour(s.notifHour);
         if (s.notifMinute) setNotifMinute(s.notifMinute);
+      } else {
+        setCurrentThemeId(systemScheme === 'light' ? 'soft-minimal' : 'minimal-dark');
       }
+
       const lastSeen = await AsyncStorage.getItem(STORAGE_KEYS.affirmationSeen);
       if (lastSeen !== todayCode) {
         const idx = getDayOfYear() % DAILY_AFFIRMATIONS.length;
         setTodayAffirmation(DAILY_AFFIRMATIONS[idx]);
         setShowAffirmation(true);
       }
+
+      if (storedPin && bioEnabled) {
+        setTimeout(() => { tryBiometricUnlock(); }, 500);
+      }
+
       if (!hasShownBetaAlert.current) {
         hasShownBetaAlert.current = true;
-        Alert.alert(`Wersja ${VERSION} ✨`, 'Kod podzielony na pliki. Aplikacja działa tak samo.', [{ text: 'OK' }]);
+        Alert.alert(
+          `Wersja ${VERSION} ✨`,
+          'Naprawione: pasek Androida, strzałka, paginacja, symulator, motywy.\nNowe: zdjęcia z galerii, GPS, biometria.',
+          [{ text: 'Super!' }]
+        );
       }
     } catch (e) { console.error(e); }
-  }, [todayCode]);
+  }, [todayCode, systemScheme, tryBiometricUnlock]);
 
   useEffect(() => {
     StatusBar.setHidden(false);
-    StatusBar.setBarStyle(LIGHT_THEMES.includes(theme.id) ? 'dark-content' : 'light-content');
+    StatusBar.setBarStyle(theme.isLight ? 'dark-content' : 'light-content');
     loadAppData();
-  }, [loadAppData, theme.id]);
+  }, [loadAppData, theme.isLight]);
 
   useEffect(() => {
     let interval = null;
@@ -269,16 +328,81 @@ export default function App() {
           await AsyncStorage.multiRemove([...Object.values(STORAGE_KEYS), ...backupKeys]);
           setMoments([]); setCapsules([]);
           setHasCompletedOnboarding(false); setSavedPin(null); setIsLocked(false);
-          setIsSettingsVisible(false); setCurrentThemeId('system'); setCurrentTab('home');
+          setBiometricEnabled(false);
+          setIsSettingsVisible(false);
+          setCurrentThemeId(systemScheme === 'light' ? 'soft-minimal' : 'minimal-dark');
+          setCurrentTab('home');
           vibrate([0, 40, 40, 40]);
         }
       }
     ]);
-  }, []);
+  }, [systemScheme]);
 
-  const pickImage = () => {
+  const pickImageFromGallery = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Brak dostępu', 'Potrzebujemy dostępu do galerii, aby dodać zdjęcie.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setMomentImage(result.assets[0].uri);
+        setMomentSource('gallery');
+        vibrate(15);
+        showToast('Zdjęcie dodane 📸');
+      }
+    } catch (e) {
+      console.error('gallery', e);
+      Alert.alert('Błąd', 'Nie udało się otworzyć galerii.');
+    }
+  };
+
+  const pickRandomImage = () => {
     setMomentImage(SAMPLE_IMAGES[Math.floor(Math.random() * SAMPLE_IMAGES.length)]);
+    setMomentSource(null);
     vibrate(15);
+  };
+
+  const useCurrentLocation = async () => {
+    setIsLoadingGps(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Brak dostępu', 'Potrzebujemy dostępu do lokalizacji.');
+        setIsLoadingGps(false);
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const [address] = await Location.reverseGeocodeAsync({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+      let place = '';
+      if (address) {
+        place = [address.city, address.region, address.country]
+          .filter(Boolean).slice(0, 2).join(', ')
+          || address.name
+          || address.street
+          || `${location.coords.latitude.toFixed(3)}, ${location.coords.longitude.toFixed(3)}`;
+      } else {
+        place = `${location.coords.latitude.toFixed(3)}, ${location.coords.longitude.toFixed(3)}`;
+      }
+      setMomentLocation(place);
+      setMomentSource('gps');
+      vibrate(20);
+      showToast(`📍 ${place}`);
+    } catch (e) {
+      console.error('gps', e);
+      Alert.alert('Błąd GPS', 'Nie udało się pobrać lokalizacji.');
+    } finally {
+      setIsLoadingGps(false);
+    }
   };
 
   const toggleRecording = () => {
@@ -304,7 +428,7 @@ export default function App() {
         vibrate([0, 60, 60, 60]);
         Alert.alert(
           'Moment już zapisany 📖',
-          'Dziś masz już swój Jeden Moment. Możesz go edytować lub usunąć, aby napisać nowy. Wróć jutro po kolejny! 🌅',
+          'Dziś masz już swój Jeden Moment. Możesz go edytować lub usunąć. Wróć jutro! 🌅',
           [{ text: 'Rozumiem' }]
         );
         return;
@@ -314,18 +438,20 @@ export default function App() {
     let updated;
     if (editingMomentId) {
       updated = moments.map(m => m.id === editingMomentId
-        ? { ...m, text: momentText.trim(), mood: momentMood, imageUri: momentImage, audioNote: momentAudio, location: momentLocation.trim() }
+        ? { ...m, text: momentText.trim(), mood: momentMood, imageUri: momentImage, audioNote: momentAudio, location: momentLocation.trim(), source: momentSource }
         : m);
     } else {
-      updated = [buildMoment(momentText, momentMood, momentImage, momentAudio, momentLocation), ...moments];
+      const newM = buildMoment(momentText, momentMood, momentImage, momentAudio, momentLocation);
+      newM.source = momentSource;
+      updated = [newM, ...moments];
     }
     await persistMoments(updated);
     setIsEditing(false); setEditingMomentId(null);
     setMomentText(''); setMomentImage(null); setMomentAudio(null);
-    setMomentMood('😊'); setMomentLocation('');
+    setMomentMood('😊'); setMomentLocation(''); setMomentSource(null);
     vibrate(35);
-    showToast(editingMomentId ? 'Wpis zaktualizowany ✓' : 'Twój Jeden Moment na dziś zapisany ✓');
-  }, [momentText, momentImage, momentAudio, momentMood, momentLocation, editingMomentId, moments, persistMoments, showToast, todayCode]);
+    showToast(editingMomentId ? 'Wpis zaktualizowany ✓' : 'Twój Jeden Moment zapisany ✓');
+  }, [momentText, momentImage, momentAudio, momentMood, momentLocation, momentSource, editingMomentId, moments, persistMoments, showToast, todayCode]);
 
   const startEditingMoment = useCallback((item) => {
     if (currentTab !== 'home' && !isEditing) setReturnTab(currentTab);
@@ -335,6 +461,7 @@ export default function App() {
     setMomentImage(item.imageUri || null);
     setMomentAudio(item.audioNote || null);
     setMomentLocation(item.location || '');
+    setMomentSource(item.source || null);
     setIsEditing(true);
     setSelectedCalendarMoment(null);
     setCurrentTab('home');
@@ -343,7 +470,7 @@ export default function App() {
 
   const cancelEditing = useCallback(() => {
     setIsEditing(false); setEditingMomentId(null);
-    setMomentImage(null); setMomentAudio(null); setMomentLocation('');
+    setMomentImage(null); setMomentAudio(null); setMomentLocation(''); setMomentSource(null);
     if (returnTab) { setCurrentTab(returnTab); setReturnTab(null); }
   }, [returnTab]);
 
@@ -419,8 +546,27 @@ export default function App() {
 
   const handleRemovePin = async () => {
     await AsyncStorage.removeItem(STORAGE_KEYS.appPin);
-    setSavedPin(null); setIsPinModalVisible(false);
+    await AsyncStorage.removeItem(STORAGE_KEYS.biometricEnabled);
+    setSavedPin(null); setBiometricEnabled(false); setIsPinModalVisible(false);
     showToast('PIN usunięty');
+  };
+
+  const toggleBiometric = async () => {
+    if (!savedPin) {
+      Alert.alert('Najpierw PIN', 'Ustaw PIN, aby móc włączyć biometrię.');
+      return;
+    }
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+    if (!hasHardware || !isEnrolled) {
+      Alert.alert('Niedostępne', 'Ten telefon nie ma skonfigurowanej biometrii (odcisk / Face ID).');
+      return;
+    }
+    const newVal = !biometricEnabled;
+    setBiometricEnabled(newVal);
+    await AsyncStorage.setItem(STORAGE_KEYS.biometricEnabled, newVal ? 'true' : 'false');
+    vibrate(30);
+    showToast(newVal ? 'Biometria włączona 🔐' : 'Biometria wyłączona');
   };
 
   const createCapsule = async () => {
@@ -488,51 +634,78 @@ export default function App() {
   }, [cardMoment]);
 
   const handleSimulateStreakDays = async (target) => {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
-    const existing = raw ? JSON.parse(raw) : [];
-    const newMoments = [...existing];
-    const base = new Date();
-    let existingConsecutive = 0;
-    for (let i = 0; i < 365; i++) {
-      const d = new Date(base); d.setDate(d.getDate() - i);
-      const key = formatDateToKey(d);
-      if (newMoments.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) existingConsecutive++;
-      else break;
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+      const existing = raw ? JSON.parse(raw) : [];
+      const newMoments = [...existing];
+      const base = new Date();
+
+      let existingConsecutive = 0;
+      for (let i = 0; i < 365; i++) {
+        const d = new Date(base);
+        d.setDate(d.getDate() - i);
+        const key = formatDateToKey(d);
+        if (newMoments.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) {
+          existingConsecutive++;
+        } else {
+          break;
+        }
+      }
+
+      const addedDates = [];
+      for (let i = 0; i < target; i++) {
+        const offset = existingConsecutive + i;
+        const d = new Date(base);
+        d.setDate(d.getDate() - offset);
+        const key = formatDateToKey(d);
+        if (newMoments.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) continue;
+
+        const mock = {
+          ...buildMoment(`Symulowany wpis passy #symulacja`, EMOTIONS[offset % EMOTIONS.length], null, null, ''),
+          id: `sim-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: d.getTime(),
+          dateKey: key,
+          date: d.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+        };
+        newMoments.push(mock);
+        addedDates.push(key);
+      }
+
+      await persistMoments(newMoments);
+      vibrate(30);
+      const newTotal = existingConsecutive + addedDates.length;
+      showToast(`🧪 +${addedDates.length} dni (passa: ${newTotal})`);
+      setIsTestPanelVisible(false);
+    } catch (e) {
+      console.error('simulate', e);
+      Alert.alert('Błąd', 'Nie udało się symulować.');
     }
-    for (let i = 0; i < target; i++) {
-      const offset = existingConsecutive + i + 1;
-      const d = new Date(base); d.setDate(d.getDate() - offset);
-      const key = formatDateToKey(d);
-      const mock = {
-        ...buildMoment(`Symulowany wpis passy #symulacja`, EMOTIONS[offset % EMOTIONS.length], null, null, ''),
-        id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-        timestamp: d.getTime(), dateKey: key,
-        date: d.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
-      };
-      newMoments.push(mock);
-    }
-    await persistMoments(newMoments);
-    vibrate(30);
-    showToast(`Dodano ${target} dni passy 🧪`);
   };
 
   const handleSimulateMockMomentWithPhotoAndAudio = async () => {
-    const y = new Date(); y.setDate(y.getDate() - 1);
-    const key = formatDateToKey(y);
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
-    const existing = raw ? JSON.parse(raw) : [];
-    if (existing.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) {
-      showToast('Wczoraj już ma wpis 🧪');
-      return;
+    try {
+      const y = new Date();
+      y.setDate(y.getDate() - 1);
+      const key = formatDateToKey(y);
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+      const existing = raw ? JSON.parse(raw) : [];
+      if (existing.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) {
+        showToast('Wczoraj już ma wpis 🧪');
+        return;
+      }
+      const m = {
+        ...buildMoment('Testowy moment #test wdzięczności 🚀', '⚡', SAMPLE_IMAGES[0], { duration: 5 }, 'Testowe miejsce'),
+        timestamp: y.getTime(),
+        dateKey: key,
+        date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+      };
+      await persistMoments([m, ...existing]);
+      vibrate(30);
+      showToast('Dodano testowy moment (wczoraj) 📷🎙️');
+      setIsTestPanelVisible(false);
+    } catch (e) {
+      console.error('mock', e);
     }
-    const m = {
-      ...buildMoment('Testowy moment #test wdzięczności 🚀', '⚡', SAMPLE_IMAGES[0], { duration: 5 }, 'Testowe miejsce'),
-      timestamp: y.getTime(), dateKey: key,
-      date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
-    };
-    await persistMoments([m, ...existing]);
-    vibrate(30);
-    showToast('Dodano testowy moment (wczoraj) 📷🎙️');
   };
 
   const availableTags = useMemo(() => {
@@ -589,9 +762,21 @@ export default function App() {
 
   const scrollToTop = useCallback(() => {
     try {
-      listRef.current?.scrollToLocation({ sectionIndex: 0, itemIndex: 0, animated: true, viewOffset: 0 });
+      if (listRef.current && listRef.current.scrollToLocation) {
+        listRef.current.scrollToLocation({
+          sectionIndex: 0,
+          itemIndex: 0,
+          animated: true,
+          viewOffset: 0,
+          viewPosition: 0,
+        });
+      }
     } catch (_error) {
-      // scrollToLocation może rzucić, gdy sekcja jest pusta
+      try {
+        if (listRef.current && listRef.current.scrollToOffset) {
+          listRef.current.scrollToOffset({ offset: 0, animated: true });
+        }
+      } catch (_e2) { /* ignore */ }
     }
     vibrate(15);
   }, []);
@@ -612,13 +797,18 @@ export default function App() {
 
   const dynamicStyles = useMemo(() => ({
     card: {
-      backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth,
-      borderRadius: theme.borderRadius, padding: 16, marginBottom: 16,
+      backgroundColor: theme.card,
+      borderColor: theme.border,
+      borderWidth: theme.borderWidth,
+      borderRadius: theme.borderRadius,
+      padding: 16,
+      marginBottom: 16,
     },
     button: {
       backgroundColor: theme.accent,
-      borderRadius: theme.id === 'neo-brutalism' ? 0 : theme.borderRadius,
-      borderWidth: theme.id === 'neo-brutalism' ? 3 : 0, borderColor: '#000',
+      borderRadius: theme.borderRadius,
+      borderWidth: 0,
+      borderColor: '#000',
     },
   }), [theme]);
 
@@ -709,6 +899,7 @@ export default function App() {
     <MomentCard item={item} theme={theme} cardStyle={dynamicStyles.card} onMenu={openActionMenu} />
   ), [theme, dynamicStyles.card, openActionMenu]);
 
+  // ⭐ EKRAN BLOKADY
   if (isLocked) {
     return (
       <SafeAreaView style={[styles.container, styles.centered, { backgroundColor: theme.bg }]}>
@@ -728,8 +919,16 @@ export default function App() {
             style={[styles.mainButton, dynamicStyles.button, { marginTop: 16, opacity: pinLockedUntil > Date.now() ? 0.5 : 1 }]}
             onPress={handleUnlockPin}
           >
-            <Text style={{ color: theme.id === 'neo-brutalism' ? '#000' : '#FFF', fontWeight: 'bold' }}>Odblokuj</Text>
+            <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Odblokuj</Text>
           </TouchableOpacity>
+          {biometricEnabled && (
+            <TouchableOpacity
+              style={[styles.mainButton, { marginTop: 10, backgroundColor: 'transparent', borderWidth: 2, borderColor: theme.accent }]}
+              onPress={tryBiometricUnlock}
+            >
+              <Text style={{ color: theme.accent, fontWeight: 'bold' }}>🔐 Użyj biometrii</Text>
+            </TouchableOpacity>
+          )}
         </View>
         <Toast message={toastMessage} theme={theme} actionLabel={toastAction?.label} onAction={toastAction?.fn} />
       </SafeAreaView>
@@ -749,7 +948,7 @@ export default function App() {
             Wróć jutro po kolejny 🌅
           </Text>
           <TouchableOpacity style={[styles.mainButton, dynamicStyles.button]} onPress={completeOnboarding}>
-            <Text style={{ color: theme.id === 'neo-brutalism' ? '#000' : '#FFF', fontWeight: 'bold', fontSize: 16 }}>Rozpocznij przygodę</Text>
+            <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>Rozpocznij przygodę</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -777,15 +976,24 @@ export default function App() {
                   <Text style={{ fontSize: 13 }}>🔥</Text>
                   <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold', marginLeft: 3 }}>{currentStreak}</Text>
                 </TouchableOpacity>
+
+                {/* ⭐ Szybkie przełączanie motywu */}
+                <TouchableOpacity
+                  style={[styles.iconButton, { marginLeft: 8 }]}
+                  onPress={toggleTheme}
+                >
+                  <Text style={{ fontSize: 18 }}>{theme.isLight ? '🌙' : '☀️'}</Text>
+                </TouchableOpacity>
+
                 {currentTab === 'home' && (
                   <TouchableOpacity
-                    style={[styles.iconButton, { marginRight: 8, marginLeft: 8 }]}
+                    style={[styles.iconButton, { marginLeft: 8 }]}
                     onPress={() => { vibrate(10); setCurrentViewMode(p => p === 'list' ? 'calendar' : 'list'); }}
                   >
                     <Text style={{ fontSize: 16 }}>{currentViewMode === 'list' ? '📅' : '📋'}</Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity onPress={() => setIsSettingsVisible(true)} style={styles.iconButton}>
+                <TouchableOpacity onPress={() => setIsSettingsVisible(true)} style={[styles.iconButton, { marginLeft: 8 }]}>
                   <Text style={{ fontSize: 18, color: theme.text }}>⚙️</Text>
                 </TouchableOpacity>
               </View>
@@ -805,7 +1013,7 @@ export default function App() {
                     {momentImage && (
                       <View style={styles.imagePreviewContainer}>
                         <Image source={{ uri: momentImage }} style={styles.imagePreview} />
-                        <TouchableOpacity style={styles.removeImageBtn} onPress={() => setMomentImage(null)}>
+                        <TouchableOpacity style={styles.removeImageBtn} onPress={() => { setMomentImage(null); setMomentSource(null); }}>
                           <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✕</Text>
                         </TouchableOpacity>
                       </View>
@@ -821,24 +1029,45 @@ export default function App() {
                     <Text style={{ color: theme.subtext, fontSize: 10, textAlign: 'right', marginTop: 4 }}>
                       {momentText.length}/150
                     </Text>
-                    <TextInput
-                      style={[styles.locationInput, { color: theme.text, borderColor: theme.border }]}
-                      placeholder="📍 Miejsce (np. Kraków, Dom)"
-                      placeholderTextColor={theme.subtext}
-                      value={momentLocation} onChangeText={setMomentLocation}
-                      maxLength={40}
-                    />
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 10 }}>
-                      <TouchableOpacity onPress={pickImage} style={[styles.mediaBtn, { borderColor: theme.border }]}>
-                        <Text style={{ fontSize: 16 }}>📷 Zdjęcie</Text>
+
+                    {/* ⭐ Pole miejsca + GPS */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
+                      <TextInput
+                        style={[styles.locationInput, { flex: 1, color: theme.text, borderColor: theme.border }]}
+                        placeholder="📍 Miejsce"
+                        placeholderTextColor={theme.subtext}
+                        value={momentLocation} onChangeText={setMomentLocation}
+                        maxLength={40}
+                      />
+                      <TouchableOpacity
+                        onPress={useCurrentLocation}
+                        disabled={isLoadingGps}
+                        style={[styles.mediaBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '15' }]}
+                      >
+                        {isLoadingGps ? (
+                          <ActivityIndicator size="small" color={theme.accent} />
+                        ) : (
+                          <Text style={{ fontSize: 14, color: theme.accent, fontWeight: 'bold' }}>📍 GPS</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* ⭐ Zdjęcia: galeria + losowe */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 10, flexWrap: 'wrap' }}>
+                      <TouchableOpacity onPress={pickImageFromGallery} style={[styles.mediaBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '15' }]}>
+                        <Text style={{ fontSize: 14, color: theme.accent, fontWeight: 'bold' }}>📸 Galeria</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={pickRandomImage} style={[styles.mediaBtn, { borderColor: theme.border }]}>
+                        <Text style={{ fontSize: 14, color: theme.text }}>🎲 Losowe</Text>
                       </TouchableOpacity>
                       <TouchableOpacity onPress={toggleRecording}
                         style={[styles.mediaBtn, { borderColor: isRecording ? 'red' : theme.border, backgroundColor: isRecording ? '#FEE2E2' : 'transparent' }]}>
-                        <Text style={{ fontSize: 16, color: isRecording ? 'red' : theme.text }}>
-                          {isRecording ? `🔴 ${recordingSeconds}s (Stop)` : '🎙️ Głos'}
+                        <Text style={{ fontSize: 14, color: isRecording ? 'red' : theme.text }}>
+                          {isRecording ? `🔴 ${recordingSeconds}s` : '🎙️ Głos'}
                         </Text>
                       </TouchableOpacity>
                     </View>
+
                     {momentAudio && !isRecording && (
                       <View style={[styles.audioPill, { backgroundColor: theme.border, marginTop: 10 }]}>
                         <Text style={{ color: theme.text, fontSize: 12 }}>✓ Nagrano ({momentAudio.duration}s)</Text>
@@ -847,6 +1076,7 @@ export default function App() {
                         </TouchableOpacity>
                       </View>
                     )}
+
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 16 }}>
                       <View style={styles.row}>
                         {EMOTIONS.map(e => (
@@ -863,7 +1093,7 @@ export default function App() {
                       <Text style={{ color: theme.subtext, fontWeight: 'bold' }}>Anuluj</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.saveButton, dynamicStyles.button]} onPress={handleSaveMoment}>
-                      <Text style={{ color: theme.id === 'neo-brutalism' ? '#000' : '#FFF', fontWeight: 'bold' }}>Zapisz</Text>
+                      <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Zapisz</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -881,8 +1111,8 @@ export default function App() {
                     )}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: 120 }}
-                    initialNumToRender={10}
-                    maxToRenderPerBatch={10}
+                    initialNumToRender={6}
+                    maxToRenderPerBatch={8}
                     windowSize={7}
                     removeClippedSubviews={Platform.OS === 'android'}
                     keyboardShouldPersistTaps="handled"
@@ -947,11 +1177,11 @@ export default function App() {
                                 style={[styles.mainButton, dynamicStyles.button]}
                                 onPress={() => {
                                   setEditingMomentId(null); setMomentText('');
-                                  setMomentImage(null); setMomentAudio(null); setMomentLocation('');
+                                  setMomentImage(null); setMomentAudio(null); setMomentLocation(''); setMomentSource(null);
                                   setIsEditing(true); vibrate(10);
                                 }}
                               >
-                                <Text style={{ color: theme.id === 'neo-brutalism' ? '#000' : '#FFF', fontWeight: 'bold' }}>Napisz swój moment...</Text>
+                                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Napisz swój moment...</Text>
                               </TouchableOpacity>
                             </>
                           )}
@@ -1054,7 +1284,7 @@ export default function App() {
                             }]}
                           >
                             <Text style={{ color: theme.accent, fontWeight: '900', fontSize: 14 }}>
-                              ⬇️ Pokaż więcej ({visibleCount} / {totalFiltered})
+                              ⬇️ Pokaż więcej ({Math.min(visibleCount, totalFiltered)} / {totalFiltered})
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -1213,9 +1443,15 @@ export default function App() {
 
           </View>
 
+          {/* ⭐ NAPRAWIONY pasek nawigacji - paddingBottom dla Androida */}
           <View style={[
             styles.bottomNavBar,
-            { backgroundColor: theme.bg, borderTopColor: theme.border, paddingBottom: Platform.OS === 'android' ? 26 : 12 }
+            {
+              backgroundColor: theme.bg,
+              borderTopColor: theme.border,
+              paddingBottom: Platform.OS === 'android' ? 34 : 14,
+              paddingTop: 12,
+            }
           ]}>
             <TouchableOpacity style={styles.navItem} onPress={() => { vibrate(8); setCurrentTab('home'); }}>
               <Text style={{ fontSize: 20, opacity: currentTab === 'home' ? 1 : 0.4 }}>🏠</Text>
@@ -1236,6 +1472,7 @@ export default function App() {
 
       <Toast message={toastMessage} theme={theme} actionLabel={toastAction?.label} onAction={toastAction?.fn} />
 
+      {/* ACTION MENU */}
       <Modal visible={!!actionMoment} transparent animationType="fade" onRequestClose={() => setActionMoment(null)}>
         <TouchableOpacity style={styles.modalOverlayCenter} activeOpacity={1} onPress={() => setActionMoment(null)}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}
@@ -1273,6 +1510,7 @@ export default function App() {
         </TouchableOpacity>
       </Modal>
 
+      {/* ACHIEVEMENTS */}
       <Modal visible={isAchievementsVisible} transparent animationType="slide" onRequestClose={() => setIsAchievementsVisible(false)}>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth, maxHeight: '85%' }]}>
@@ -1302,6 +1540,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* TEST PANEL */}
       <Modal visible={isTestPanelVisible} transparent animationType="fade" onRequestClose={() => setIsTestPanelVisible(false)}>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
@@ -1324,6 +1563,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* ZEN */}
       <Modal visible={isZenVisible} animationType="fade" onRequestClose={() => setIsZenVisible(false)}>
         <TouchableOpacity
           style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 30 }}
@@ -1338,10 +1578,12 @@ export default function App() {
         </TouchableOpacity>
       </Modal>
 
+      {/* PIXEL YEAR */}
       <Modal visible={isPixelYearVisible} transparent animationType="fade" onRequestClose={() => setIsPixelYearVisible(false)}>
         <PixelYear moments={moments} year={new Date().getFullYear()} theme={theme} onClose={() => setIsPixelYearVisible(false)} />
       </Modal>
 
+      {/* NOSTALGIA */}
       <Modal visible={isNostalgiaVisible} transparent animationType="slide" onRequestClose={() => setIsNostalgiaVisible(false)}>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth, maxHeight: '85%' }]}>
@@ -1374,6 +1616,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* CAPSULE */}
       <Modal visible={isCapsuleModalVisible} transparent animationType="slide" onRequestClose={() => setIsCapsuleModalVisible(false)}>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth, maxHeight: '85%' }]}>
@@ -1428,6 +1671,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* UNLOCKED CAPSULE */}
       <Modal visible={!!unlockedCapsule} transparent animationType="fade" onRequestClose={() => setUnlockedCapsule(null)}>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.accent, borderWidth: 2 }]}>
@@ -1443,6 +1687,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* RANDOM */}
       <Modal visible={!!randomMoment} transparent animationType="fade" onRequestClose={() => setRandomMoment(null)}>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
@@ -1455,12 +1700,13 @@ export default function App() {
             </Text>
             <Text style={{ fontSize: 30, textAlign: 'center', marginBottom: 16 }}>{randomMoment?.mood}</Text>
             <TouchableOpacity style={[styles.mainButton, dynamicStyles.button]} onPress={() => setRandomMoment(null)}>
-              <Text style={{ color: theme.id === 'neo-brutalism' ? '#000' : '#FFF', fontWeight: 'bold' }}>Dziękuję</Text>
+              <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Dziękuję</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
+      {/* STREAK */}
       <Modal visible={isStreakModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth, alignItems: 'center' }]}>
@@ -1477,12 +1723,12 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* RAPORT */}
       <Modal visible={isWeeklyReportVisible} transparent animationType="slide">
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
             <Text style={{ color: theme.text, fontSize: 20, fontWeight: '900', textAlign: 'center', marginBottom: 6 }}>Podsumowanie Tygodnia 📊</Text>
             <Text style={{ color: theme.subtext, fontSize: 12, textAlign: 'center', marginBottom: 16 }}>Ostatnie 7 dni</Text>
-
             <View style={{ backgroundColor: theme.bg, padding: 12, borderRadius: 12, marginBottom: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 70, justifyContent: 'space-around' }}>
                 {last7DaysStats.map(d => {
@@ -1499,7 +1745,6 @@ export default function App() {
                 })}
               </View>
             </View>
-
             <View style={{ backgroundColor: theme.bg, padding: 16, borderRadius: 12, marginBottom: 12 }}>
               <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold', marginBottom: 6 }}>Zapisane: {weeklyReport.count} dni</Text>
               <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold', marginBottom: 6 }}>Główna emocja: {weeklyReport.topMood}</Text>
@@ -1512,6 +1757,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* KARTA */}
       <Modal visible={!!cardMoment} transparent animationType="slide">
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
@@ -1551,6 +1797,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* USTAWIENIA */}
       <Modal visible={isSettingsVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: theme.bg, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
@@ -1576,9 +1823,18 @@ export default function App() {
                 <Text style={{ color: theme.text, fontWeight: 'bold' }}>Zabezpieczenie PIN</Text>
                 <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>{savedPin ? 'PIN aktywny' : 'Brak blokady'}</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]} onPress={toggleBiometric}>
+                <View>
+                  <Text style={{ color: theme.text, fontWeight: 'bold' }}>🔐 Biometria</Text>
+                  <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>
+                    {biometricEnabled ? 'Włączona' : 'Wyłączona'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 20 }}>{biometricEnabled ? '✓' : '○'}</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]} onPress={() => setIsThemePickerVisible(true)}>
                 <Text style={{ color: theme.text, fontWeight: 'bold' }}>Motyw UI</Text>
-                <Text style={{ color: theme.accent, fontWeight: 'bold' }}>{theme.name} ▾</Text>
+                <Text style={{ color: theme.accent, fontWeight: 'bold' }}>{theme.name} {theme.icon} ▾</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, marginBottom: 8 }]} onPress={exportDataJSON}>
                 <Text style={{ color: theme.accent, textAlign: 'center', fontWeight: 'bold' }}>Eksportuj jako JSON</Text>
@@ -1595,26 +1851,28 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* MOTYWY */}
       <Modal visible={isThemePickerVisible} animationType="fade" transparent>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
             <Text style={{ color: theme.text, fontSize: 20, fontWeight: '900', marginBottom: 16, textAlign: 'center' }}>Wybierz Motyw</Text>
-            <ScrollView style={{ maxHeight: 320 }}>
-              {themeList.map(t => (
-                <TouchableOpacity key={t.id} onPress={() => changeTheme(t.id)} style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: theme.border }}>
-                  <Text style={{ color: theme.text, fontWeight: currentThemeId === t.id ? 'bold' : 'normal' }}>
-                    {t.name}{currentThemeId === t.id ? '  ✓' : ''}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TouchableOpacity style={[styles.mainButton, dynamicStyles.button, { marginTop: 16 }]} onPress={() => setIsThemePickerVisible(false)}>
+            {themeList.map(t => (
+              <TouchableOpacity key={t.id} onPress={() => changeTheme(t.id)}
+                style={{ padding: 16, borderWidth: 2, borderColor: currentThemeId === t.id ? theme.accent : theme.border, borderRadius: 12, marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ color: theme.text, fontWeight: 'bold', fontSize: 16 }}>
+                  {t.icon}  {t.name}
+                </Text>
+                {currentThemeId === t.id && <Text style={{ color: theme.accent, fontSize: 18 }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={[styles.mainButton, dynamicStyles.button, { marginTop: 8 }]} onPress={() => setIsThemePickerVisible(false)}>
               <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Zamknij</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
+      {/* PIN */}
       <Modal visible={isPinModalVisible} animationType="fade" transparent>
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
@@ -1640,6 +1898,7 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* KALENDARZ DETAIL */}
       <Modal visible={!!selectedCalendarMoment} transparent animationType="fade">
         <View style={styles.modalOverlayCenter}>
           <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
