@@ -1,12 +1,60 @@
 {
   "expo": {
-    "extra": {
-      "eas": {
-        "projectId": "39b32a27-8068-4c51-8d8e-58ad3c87eeac"
-      }
+    "name": "Jeden Moment",
+    "slug": "moment-app",
+    "version": "0.7.4",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "assetBundlePatterns": ["**/*"],
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0F0F"
     },
     "android": {
-      "package": "com.nixon47.momentapp"
-    }
+      "package": "com.yerdi71.moment",
+      "versionCode": 4,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0F0F0F"
+      },
+      "permissions": [
+        "VIBRATE",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "SCHEDULE_EXACT_ALARM",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "MODIFY_AUDIO_SETTINGS"
+      ],
+      "userInterfaceStyle": "automatic"
+    },
+    "ios": {
+      "bundleIdentifier": "com.yerdi71.moment",
+      "buildNumber": "4",
+      "icon": "./assets/icon.png",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Aplikacja używa aparatu do dodawania zdjęć do momentów.",
+        "NSMicrophoneUsageDescription": "Aplikacja używa mikrofonu do nagrywania notatek głosowych.",
+        "NSLocationWhenInUseUsageDescription": "Aplikacja używa lokalizacji do oznaczania miejsca momentu.",
+        "NSFaceIDUsageDescription": "Aplikacja używa Face ID do odblokowania dziennika."
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      ["expo-notifications", { "icon": "./assets/icon.png", "color": "#8B5CF6", "sounds": [] }],
+      ["expo-av", { "microphonePermission": "Aplikacja używa mikrofonu do nagrywania notatek głosowych." }],
+      ["expo-camera", { "cameraPermission": "Aplikacja używa aparatu do dodawania zdjęć." }]
+    ],
+    "description": "Dziennik wdzięczności — jeden moment dziennie.",
+    "primaryColor": "#8B5CF6",
+    "platforms": ["android", "ios", "web"]
   }
 }
