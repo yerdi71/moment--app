@@ -1,7 +1,7 @@
 // ─── KONFIGURACJA ───
-export const VERSION = '0.7.2.2';
-export const INITIAL_VISIBLE = 20;
-export const LOAD_STEP = 20;
+export const VERSION = '0.7.3';
+export const INITIAL_VISIBLE = 3;   // ⭐ ZMIANA: 3 zamiast 20 (błąd #3)
+export const LOAD_STEP = 8;         // ⭐ ZMIANA: 8 zamiast 20 (błąd #3)
 
 export const STORAGE_KEYS = {
   moments: '@moje_momenty',
@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   capsules: '@capsules',
   backupPrefix: '@backup_',
   affirmationSeen: '@affirmation_seen',
+  biometricEnabled: '@biometric_enabled',  // ⭐ NOWE
 };
 
 // ─── EMOCJE ───
@@ -23,17 +24,40 @@ export const SAMPLE_IMAGES = [
   'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=500',
 ];
 
-// ─── MOTYWY ───
+// ─── MOTYWY (tylko 2!) ───
+// ⭐ ZMIANA: usunięto system, neo-brutalism, hand-drawn, dark-neon (błąd #5)
 export const UI_THEMES = {
-  'system': { id: 'system', name: '0. Auto (systemowy)', bg: '#0F0F0F', card: '#1A1A1A', text: '#FFFFFF', subtext: '#8B949E', accent: '#A855F7', border: '#333333', borderWidth: 1, borderRadius: 16 },
-  'soft-minimal': { id: 'soft-minimal', name: '1. Soft Minimal', bg: '#F9FAFB', card: '#FFFFFF', text: '#111827', subtext: '#6B7280', accent: '#8B5CF6', border: '#E5E7EB', borderWidth: 1, borderRadius: 20 },
-  'minimal-dark': { id: 'minimal-dark', name: '2. Minimal Dark', bg: '#0F0F0F', card: '#1A1A1A', text: '#FFFFFF', subtext: '#8B949E', accent: '#A855F7', border: '#333333', borderWidth: 1, borderRadius: 16 },
-  'neo-brutalism': { id: 'neo-brutalism', name: '3. Neo-Brutalism', bg: '#F3F0E6', card: '#FFFFFF', text: '#000000', subtext: '#000000', accent: '#B066FF', border: '#000000', borderWidth: 3, borderRadius: 0 },
-  'hand-drawn': { id: 'hand-drawn', name: '4. Hand-Drawn', bg: '#FDFBF7', card: '#F4F1EA', text: '#1A1A1A', subtext: '#3B3B3B', accent: '#D946EF', border: '#1A1A1A', borderWidth: 2, borderRadius: 4 },
-  'dark-neon': { id: 'dark-neon', name: '5. Dark Neon', bg: '#0B0B1A', card: '#16162D', text: '#FFFFFF', subtext: '#A78BFA', accent: '#C084FC', border: '#4C1D95', borderWidth: 1, borderRadius: 20 },
+  'soft-minimal': {
+    id: 'soft-minimal',
+    name: 'Jasny',
+    icon: '☀️',
+    isLight: true,
+    bg: '#F9FAFB',
+    card: '#FFFFFF',
+    text: '#111827',
+    subtext: '#6B7280',
+    accent: '#8B5CF6',
+    border: '#E5E7EB',
+    borderWidth: 1,
+    borderRadius: 20,
+  },
+  'minimal-dark': {
+    id: 'minimal-dark',
+    name: 'Ciemny',
+    icon: '🌙',
+    isLight: false,
+    bg: '#0F0F0F',
+    card: '#1A1A1A',
+    text: '#FFFFFF',
+    subtext: '#8B949E',
+    accent: '#A855F7',
+    border: '#333333',
+    borderWidth: 1,
+    borderRadius: 16,
+  },
 };
 
-export const LIGHT_THEMES = ['soft-minimal', 'hand-drawn', 'neo-brutalism'];
+export const LIGHT_THEMES = ['soft-minimal'];
 
 export const CARD_BACKGROUNDS = [
   { id: 'purple', name: 'Lawendowy', bg: '#8B5CF6', text: '#FFFFFF', sub: '#DDD6FE', border: '#A78BFA' },
@@ -64,6 +88,8 @@ export const ACHIEVEMENTS_LIST = [
   { id: 'voice_master', title: 'Głos Serca', desc: 'Dodaj notatkę głosową.', icon: '🎙️', check: (m) => m.some(x => x.audioNote) },
   { id: 'favorite_5', title: 'Kurator Wspomnień', desc: 'Oznacz 5 wpisów jako ⭐.', icon: '⭐', check: (m) => m.filter(x => x.isFavorite).length >= 5 },
   { id: 'traveler', title: 'Podróżnik', desc: 'Dodaj wpis z 3 różnych miejsc.', icon: '🗺️', check: (m) => new Set(m.map(x => x.location).filter(Boolean)).size >= 3 },
+  { id: 'gallery_master', title: 'Fotograf', desc: 'Dodaj zdjęcie z galerii.', icon: '🖼️', check: (m) => m.some(x => x.source === 'gallery') },
+  { id: 'gps_master', title: 'Odkrywca', desc: 'Użyj GPS do oznaczenia miejsca.', icon: '🧭', check: (m) => m.some(x => x.source === 'gps') },
 ];
 
 // ─── TREŚCI CODZIENNE ───
