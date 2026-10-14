@@ -2666,4 +2666,3 @@ function AppInner() {
     </SafeAreaView>
   );
 }
-  // ═══ DALSZA CZĘŚĆ (JSX) W NASTĘPNEJ WIADOMOŚCI ═══
