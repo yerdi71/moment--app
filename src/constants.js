@@ -1,5 +1,5 @@
 // ─── KONFIGURACJA ───
-export const VERSION = '0.7.4';
+export const VERSION = '0.7.4.1';
 export const INITIAL_VISIBLE = 3;
 export const LOAD_STEP = 8;
 
@@ -13,10 +13,14 @@ export const STORAGE_KEYS = {
   backupPrefix: '@backup_',
   affirmationSeen: '@affirmation_seen',
   biometricEnabled: '@biometric_enabled',
-  waterings: '@moje_podlewania',           // ⭐ NOWE
-  notificationDaily: '@notif_daily_enabled', // ⭐ NOWE
-  notificationHour: '@notif_daily_hour',   // ⭐ NOWE
-  notificationMinute: '@notif_daily_minute', // ⭐ NOWE
+  waterings: '@moje_podlewania',
+  notificationDaily: '@notif_daily_enabled',
+  notificationHour: '@notif_daily_hour',
+  notificationMinute: '@notif_daily_minute',
+  testModeEnabled: '@test_mode_enabled',         // ⭐ NOWE
+  betaMessageSeen: '@beta_message_seen',         // ⭐ NOWE
+  hideSystemBar: '@hide_system_bar',             // ⭐ NOWE
+  hiddenSections: '@hidden_sections',            // ⭐ NOWE (dla X w Cichym Aniele i Wdzięczności)
 };
 
 // ─── EMOCJE ───
@@ -28,7 +32,7 @@ export const SAMPLE_IMAGES = [
   'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=500',
 ];
 
-// ─── MOTYWY (tylko 2) ───
+// ─── MOTYWY ───
 export const UI_THEMES = {
   'soft-minimal': {
     id: 'soft-minimal',
@@ -71,7 +75,7 @@ export const CARD_BACKGROUNDS = [
   { id: 'minimal', name: 'Czysta Biel', bg: '#FFFFFF', text: '#111827', sub: '#6B7280', border: '#E5E7EB' },
 ];
 
-// ─── DRZEWKO (etapy wzrostu) ───
+// ─── DRZEWKO ───
 export const TREE_STAGES = [
   { min: 100, icon: '🌳✨', name: 'Magiczne Drzewo', desc: 'Stworzyłeś niesamowity ekosystem pełen wdzięczności i miłości.' },
   { min: 50, icon: '🌲', name: 'Majestatyczne Bonsai', desc: 'Zapuściłeś potężne korzenie. Twoja praktyka stała się nawykiem.' },
@@ -81,7 +85,7 @@ export const TREE_STAGES = [
   { min: 0, icon: '🌱', name: 'Zasiane Nasionko', desc: 'Każda wielka zmiana zaczyna się od małego kroku.' },
 ];
 
-// ─── ODZNAKI GŁÓWNE (ogólne) ───
+// ─── ODZNAKI GŁÓWNE ───
 export const ACHIEVEMENTS_LIST = [
   { id: 'first_step', title: 'Pierwszy Krok', desc: 'Dodaj swój pierwszy moment wdzięczności.', icon: '🌱', check: (m, s) => m.length >= 1 },
   { id: 'streak_3', title: 'Mała Passa', desc: 'Utrzymaj 3-dniową passę.', icon: '🔥', check: (m, s) => s >= 3 },
@@ -97,9 +101,7 @@ export const ACHIEVEMENTS_LIST = [
   { id: 'camera_master', title: 'Migawka', desc: 'Zrób zdjęcie w aplikacji.', icon: '📸', check: (m) => m.some(x => x.source === 'camera') },
 ];
 
-// ═══════════════════════════════════════════
-// ─── NOWE: ODZNAKI OGRODU ───
-// ═══════════════════════════════════════════
+// ─── ODZNAKI OGRODU ───
 export const GARDEN_ACHIEVEMENTS = [
   {
     id: 'gardener',
@@ -242,6 +244,18 @@ export const VIBE_DESCRIPTIONS = {
   '⚡': { title: 'Wulkan Energii', desc: 'Akcja i ekscytacja! Twój dziennik kipi od dynamicznych momentów.' },
   '💡': { title: 'Błyskotliwy Umysł', desc: 'Często doświadczasz momentów „Aha!”. Rozwój to Twój żywioł.' },
   '❤️': { title: 'Czułe Serce', desc: 'Relacje i miłość są dla Ciebie kluczowe. Piękna cecha!' },
+};
+
+// ─── KOMUNIKAT BETA ───
+export const BETA_MESSAGE = {
+  title: `🧪 Wersja Beta v${VERSION}`,
+  body: 'To jest wersja testowa. Możesz napotkać błędy.\n\nNiektóre funkcje mogą nie działać poprawnie.\n\nTwoje dane są bezpieczne — nie zostaną utracone.',
+  buttons: ['OK', 'Zgłoś problem'],
+};
+
+export const TEST_MODE_WARNING = {
+  title: '🧪 Panel Testowy',
+  body: 'To narzędzie do testowania funkcji. Po włączeniu zobaczysz panel z symulacjami.\n\nNiektóre funkcje mogą nie działać poprawnie. Zalecane tylko dla testerów.\n\nCzy chcesz włączyć tryb testowy?',
 };
 
 export const STOPWORDS = new Set(['i','w','na','z','do','się','że','nie','to','jest','a','o','by','ale','jak','za','od','po','tak','już','mi','mnie','mój','moja','moje','the','and','for','you','this']);
