@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, SafeAreaView,
   TextInput, Platform, StatusBar, KeyboardAvoidingView,
   SectionList, Alert, Modal, ScrollView, Image, Share, useColorScheme,
-  Vibration, ActivityIndicator
+  Vibration, ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -17,6 +17,7 @@ import {
   VERSION, INITIAL_VISIBLE, LOAD_STEP, STORAGE_KEYS,
   EMOTIONS, SAMPLE_IMAGES, UI_THEMES, LIGHT_THEMES, CARD_BACKGROUNDS,
   ACHIEVEMENTS_LIST, GARDEN_ACHIEVEMENTS, DAILY_PROMPTS, DAILY_AFFIRMATIONS, DAILY_QUOTES,
+  BETA_MESSAGE, TEST_MODE_WARNING,
 } from './src/constants';
 
 import {
@@ -31,6 +32,8 @@ import { styles } from './src/styles';
 import { Toast, MomentCard, WeekChart, PixelYear } from './src/components';
 import SearchModal from './src/SearchModal';
 import Garden from './src/Garden';
+import TestPanel from './src/TestPanel';
+import ExportModal from './src/ExportModal';
 import { CHANGELOG, CURRENT_VERSION } from './src/changelog';
 
 import {
@@ -42,6 +45,9 @@ import {
   setupNotificationChannel,
   addNotificationResponseListener,
   getNotificationStatus,
+  scheduleCapsuleNotification,
+  scheduleStreakNotification,
+  cancelAllNotifications,
 } from './src/notifications';
 
 // ═══════════════════════════════════════════
@@ -93,16 +99,21 @@ function AppInner() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recording, setRecording] = useState(null);
   const [isLoadingGps, setIsLoadingGps] = useState(false);
+  const [playingAudioId, setPlayingAudioId] = useState(null);
 
   // ─── Ustawienia ───
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [isThemePickerVisible, setIsThemePickerVisible] = useState(false);
   const [isChangelogVisible, setIsChangelogVisible] = useState(false);
+  const [isTestPanelVisible, setIsTestPanelVisible] = useState(false);
+  const [isExportModalVisible, setIsExportModalVisible] = useState(false);
   const [currentThemeId, setCurrentThemeId] = useState('minimal-dark');
   const [notifHour, setNotifHour] = useState('20');
   const [notifMinute, setNotifMinute] = useState('00');
   const [notifPermission, setNotifPermission] = useState('unknown');
   const [dailyNotifEnabled, setDailyNotifEnabled] = useState(false);
+  const [testModeEnabled, setTestModeEnabled] = useState(false);
+  const [hideSystemBar, setHideSystemBar] = useState(false);
 
   // ─── Kalendarz ───
   const [selectedCalendarMoment, setSelectedCalendarMoment] = useState(null);
@@ -133,7 +144,6 @@ function AppInner() {
   const [isCapsuleModalVisible, setIsCapsuleModalVisible] = useState(false);
   const [isZenVisible, setIsZenVisible] = useState(false);
   const [isAchievementsVisible, setIsAchievementsVisible] = useState(false);
-  const [isTestPanelVisible, setIsTestPanelVisible] = useState(false);
   const [zenMoment, setZenMoment] = useState(null);
   const [actionMoment, setActionMoment] = useState(null);
   const [randomMoment, setRandomMoment] = useState(null);
@@ -179,6 +189,7 @@ function AppInner() {
   const wateringStreak = useMemo(() => computeWateringStreak(waterings), [waterings]);
   const wateredToday = useMemo(() => isWateredToday(waterings), [waterings]);
 
+  // ─── Toast ───
   const showToast = useCallback((msg, actionLabel, onAction) => {
     setToastMessage(msg);
     setToastAction(actionLabel ? { label: actionLabel, fn: onAction } : null);
@@ -199,7 +210,7 @@ function AppInner() {
     return count;
   }, [searchQuery, selectedMoodFilter, selectedTagFilter, selectedLocationFilter, onlyFavorites]);
 
-  // ─── Motyw ───
+  // ⭐ Motyw: przełączanie (naprawione — bez wyrzucania do PIN)
   const toggleTheme = useCallback(() => {
     const nextId = currentThemeId === 'soft-minimal' ? 'minimal-dark' : 'soft-minimal';
     setCurrentThemeId(nextId);
@@ -207,7 +218,8 @@ function AppInner() {
     showToast(`Motyw: ${UI_THEMES[nextId].name}`);
     AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify({
       themeId: nextId, notifHour, notifMinute,
-    }));
+    })).catch(e => console.error('save theme', e));
+    // NIE zmieniamy stanu `isLocked`
   }, [currentThemeId, notifHour, notifMinute, showToast]);
 
   // ─── Biometria ───
@@ -235,10 +247,23 @@ function AppInner() {
     }
   }, []);
 
+  // ─── Ukryj pasek systemowy ───
+  useEffect(() => {
+    if (hideSystemBar) {
+      StatusBar.setHidden(true, 'fade');
+    } else {
+      StatusBar.setHidden(false);
+      StatusBar.setBarStyle(theme.isLight ? 'dark-content' : 'light-content');
+    }
+  }, [hideSystemBar, theme.isLight]);
+
   // ─── Ładowanie danych ───
   const loadAppData = useCallback(async () => {
     try {
-      const [storedMoments, onboardingStatus, storedSettings, storedPin, storedCapsules, storedBiometric, storedWaterings] = await Promise.all([
+      const [
+        storedMoments, onboardingStatus, storedSettings, storedPin, storedCapsules,
+        storedBiometric, storedWaterings, storedTestMode, storedBetaSeen, storedHideBar,
+      ] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.moments),
         AsyncStorage.getItem(STORAGE_KEYS.onboarding),
         AsyncStorage.getItem(STORAGE_KEYS.settings),
@@ -246,13 +271,17 @@ function AppInner() {
         AsyncStorage.getItem(STORAGE_KEYS.capsules),
         AsyncStorage.getItem(STORAGE_KEYS.biometricEnabled),
         AsyncStorage.getItem(STORAGE_KEYS.waterings),
+        AsyncStorage.getItem(STORAGE_KEYS.testModeEnabled),
+        AsyncStorage.getItem(STORAGE_KEYS.betaMessageSeen),
+        AsyncStorage.getItem(STORAGE_KEYS.hideSystemBar),
       ]);
 
       if (storedMoments) setMoments(JSON.parse(storedMoments));
       if (storedCapsules) setCapsules(JSON.parse(storedCapsules));
       if (storedWaterings) setWaterings(JSON.parse(storedWaterings));
-
       setHasCompletedOnboarding(onboardingStatus === 'true');
+      setTestModeEnabled(storedTestMode === 'true');
+      setHideSystemBar(storedHideBar === 'true');
 
       if (storedPin) {
         setSavedPin(storedPin);
@@ -280,6 +309,7 @@ function AppInner() {
 
       await setupNotificationChannel();
 
+      // Codzienna afirmacja
       const lastSeen = await AsyncStorage.getItem(STORAGE_KEYS.affirmationSeen);
       if (lastSeen !== todayCode) {
         const idx = getDayOfYear() % DAILY_AFFIRMATIONS.length;
@@ -287,27 +317,42 @@ function AppInner() {
         setShowAffirmation(true);
       }
 
+      // Auto-biometria
       if (storedPin && bioEnabled) {
         setTimeout(() => { tryBiometricUnlock(); }, 500);
       }
 
-      if (!hasShownBetaAlert.current) {
+      // ⭐ Komunikat Beta — przy KAŻDYM wejściu
+      if (!hasShownBetaAlert.current && onboardingStatus === 'true') {
         hasShownBetaAlert.current = true;
-        Alert.alert(
-          `Wersja ${VERSION} ✨`,
-          'Wielka aktualizacja!\n\n🎨 Nowa ikona\n🔍 Nowy modal wyszukiwania\n🌳 System dbania o drzewko\n🎙️ Prawdziwe nagrywanie głosu\n📷 Aparat w apce\n🔔 Powiadomienia o 20:00\n📜 Historia zmian',
-          [{ text: 'Super!' }]
-        );
+        setTimeout(() => {
+          Alert.alert(
+            BETA_MESSAGE.title,
+            BETA_MESSAGE.body,
+            [
+              { text: 'OK', style: 'default' },
+              {
+                text: 'Zgłoś problem',
+                onPress: () => {
+                  Alert.alert(
+                    'Zgłoś problem',
+                    'Napisz do mnie na GitHub:\ngithub.com/yerdi71/moment--app/issues\n\nZ podaniem wersji: ' + VERSION,
+                    [{ text: 'OK' }]
+                  );
+                },
+              },
+            ]
+          );
+        }, 1000);
       }
     } catch (e) { console.error(e); }
   }, [todayCode, systemScheme, tryBiometricUnlock]);
 
   useEffect(() => {
-    StatusBar.setHidden(false);
-    StatusBar.setBarStyle(theme.isLight ? 'dark-content' : 'light-content');
     loadAppData();
-  }, [loadAppData, theme.isLight]);
+  }, [loadAppData]);
 
+  // ─── Notification listener ───
   useEffect(() => {
     const sub = addNotificationResponseListener((data) => {
       console.log('Notification clicked:', data);
@@ -315,6 +360,7 @@ function AppInner() {
     return () => { if (sub && sub.remove) sub.remove(); };
   }, []);
 
+  // ─── Timer nagrywania ───
   useEffect(() => {
     let interval = null;
     if (isRecording) interval = setInterval(() => setRecordingSeconds(p => p + 1), 1000);
@@ -322,6 +368,7 @@ function AppInner() {
     return () => clearInterval(interval);
   }, [isRecording]);
 
+  // ─── PIN lock timer ───
   useEffect(() => {
     if (pinLockedUntil <= Date.now()) { setPinLockTimer(0); return; }
     const iv = setInterval(() => {
@@ -332,6 +379,7 @@ function AppInner() {
     return () => clearInterval(iv);
   }, [pinLockedUntil]);
 
+  // ─── Reset paginacji ───
   useEffect(() => {
     setVisibleCount(INITIAL_VISIBLE);
   }, [searchQuery, selectedMoodFilter, selectedTagFilter, selectedLocationFilter, onlyFavorites]);
@@ -391,11 +439,8 @@ function AppInner() {
 
     if (dailyNotifEnabled) {
       const result = await scheduleDailyReminder(h, m);
-      if (result.success) {
-        showToast(`Przypomnienie: ${notifHour}:${notifMinute} ✓`);
-      } else {
-        showToast('Nie udało się ustawić przypomnienia');
-      }
+      if (result.success) showToast(`Przypomnienie: ${notifHour}:${notifMinute} ✓`);
+      else showToast('Nie udało się ustawić przypomnienia');
     } else {
       showToast('Godzina zapisana ✓');
     }
@@ -423,6 +468,42 @@ function AppInner() {
       setDailyNotifEnabled(false);
       vibrate(20);
       showToast('Powiadomienia wyłączone');
+    }
+  };
+
+  // ─── Ukrywanie paska systemowego ───
+  const toggleHideSystemBar = async () => {
+    const newVal = !hideSystemBar;
+    setHideSystemBar(newVal);
+    await AsyncStorage.setItem(STORAGE_KEYS.hideSystemBar, newVal ? 'true' : 'false');
+    vibrate(20);
+    showToast(newVal ? 'Pasek systemowy ukryty' : 'Pasek systemowy widoczny');
+  };
+
+  // ─── Test mode ───
+  const toggleTestMode = () => {
+    if (!testModeEnabled) {
+      Alert.alert(
+        TEST_MODE_WARNING.title,
+        TEST_MODE_WARNING.body,
+        [
+          { text: 'Anuluj', style: 'cancel' },
+          {
+            text: 'Włącz',
+            onPress: async () => {
+              setTestModeEnabled(true);
+              await AsyncStorage.setItem(STORAGE_KEYS.testModeEnabled, 'true');
+              vibrate(30);
+              showToast('Tryb testowy włączony 🧪');
+            },
+          },
+        ]
+      );
+    } else {
+      setTestModeEnabled(false);
+      AsyncStorage.setItem(STORAGE_KEYS.testModeEnabled, 'false');
+      vibrate(20);
+      showToast('Tryb testowy wyłączony');
     }
   };
 
@@ -468,7 +549,7 @@ function AppInner() {
     ]);
   }, [systemScheme]);
 
-  // ─── Zdjęcia: galeria ───
+  // ─── Zdjęcia ───
   const pickImageFromGallery = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -494,7 +575,6 @@ function AppInner() {
     }
   };
 
-  // ─── Zdjęcia: aparat ───
   const pickImageFromCamera = async () => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -561,7 +641,7 @@ function AppInner() {
     }
   };
 
-  // ─── Audio: prawdziwe nagrywanie ───
+  // ─── Audio ───
   const startRecording = async () => {
     try {
       const { status } = await Audio.requestPermissionsAsync();
@@ -609,6 +689,34 @@ function AppInner() {
   const toggleRecording = () => {
     if (isRecording) stopRecording();
     else startRecording();
+  };
+
+  // ⭐ Odtwarzanie audio z wpisu
+  const playAudioFromMoment = async (moment) => {
+    if (!moment?.audioNote?.uri) {
+      showToast('Brak nagrania audio');
+      return;
+    }
+    try {
+      if (playingAudioId === moment.id) {
+        setPlayingAudioId(null);
+        return;
+      }
+      setPlayingAudioId(moment.id);
+      vibrate(10);
+      const { sound } = await Audio.Sound.createAsync({ uri: moment.audioNote.uri });
+      await sound.playAsync();
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          sound.unloadAsync();
+          setPlayingAudioId(null);
+        }
+      });
+    } catch (e) {
+      console.error('playAudioFromMoment', e);
+      setPlayingAudioId(null);
+      showToast('Nie udało się odtworzyć nagrania');
+    }
   };
 
   const playAudio = async () => {
@@ -660,10 +768,9 @@ function AppInner() {
     vibrate(35);
     showToast(editingMomentId ? 'Wpis zaktualizowany ✓' : 'Twój Jeden Moment zapisany ✓');
 
-    // ⭐ Nowy streak — jeśli 7 lub 30 dni, wyślij powiadomienie gratulacyjne
     const newStreak = calculateStreak(updated);
     if (newStreak === 7 || newStreak === 30) {
-      // Można dodać powiadomienie gratulacyjne
+      scheduleStreakNotification(newStreak).catch(e => console.error(e));
     }
   }, [momentText, momentImage, momentAudio, momentMood, momentLocation, momentSource, editingMomentId, moments, persistMoments, showToast, todayCode]);
 
@@ -808,6 +915,10 @@ function AppInner() {
     const updated = [capsule, ...capsules];
     setCapsules(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.capsules, JSON.stringify(updated));
+    // Zaplanuj powiadomienie o kapsule
+    if (dailyNotifEnabled) {
+      scheduleCapsuleNotification(capsule.id, capsule.text, unlockAt).catch(e => console.error(e));
+    }
     setCapsuleText(''); setCapsuleDays('30');
     vibrate(30);
     showToast('Kapsuła zapisana 🔒');
@@ -886,7 +997,7 @@ function AppInner() {
     }
   }, [cardMoment]);
 
-  // ─── Symulatory ───
+  // ─── Symulatory (dla TestPanel) ───
   const handleSimulateStreakDays = async (target) => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
@@ -921,32 +1032,185 @@ function AppInner() {
       await persistMoments(newMoments);
       vibrate(30);
       showToast(`🧪 +${addedDates.length} dni`);
-      setIsTestPanelVisible(false);
+    } catch (e) { console.error('simulate', e); }
+  };
+
+  const handleAddPhotoMoment = async () => {
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const key = formatDateToKey(y);
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+    const existing = raw ? JSON.parse(raw) : [];
+    if (existing.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) {
+      showToast('Wczoraj już ma wpis 🧪');
+      return;
+    }
+    const m = {
+      ...buildMoment('Testowy moment 📸 #test', '😊', SAMPLE_IMAGES[0], null, ''),
+      timestamp: y.getTime(), dateKey: key,
+      date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+      source: 'gallery',
+    };
+    await persistMoments([m, ...existing]);
+    vibrate(30);
+    showToast('Dodano moment ze zdjęciem 📸');
+  };
+
+  const handleAddAudioMoment = async () => {
+    const y = new Date(); y.setDate(y.getDate() - 2);
+    const key = formatDateToKey(y);
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+    const existing = raw ? JSON.parse(raw) : [];
+    const m = {
+      ...buildMoment('Testowy moment 🎙️ #test', '⚡', null, { duration: 5 }, ''),
+      timestamp: y.getTime(), dateKey: key,
+      date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+    };
+    await persistMoments([m, ...existing]);
+    vibrate(30);
+    showToast('Dodano moment z audio 🎙️');
+  };
+
+  const handleAddGpsMoment = async () => {
+    const y = new Date(); y.setDate(y.getDate() - 3);
+    const key = formatDateToKey(y);
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+    const existing = raw ? JSON.parse(raw) : [];
+    const m = {
+      ...buildMoment('Testowy moment 📍 #test', '💡', null, null, 'Warszawa, Polska'),
+      timestamp: y.getTime(), dateKey: key,
+      date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+      source: 'gps',
+    };
+    await persistMoments([m, ...existing]);
+    vibrate(30);
+    showToast('Dodano moment z GPS 📍');
+  };
+
+  const handleAddFullMoment = async () => {
+    const y = new Date(); y.setDate(y.getDate() - 4);
+    const key = formatDateToKey(y);
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+    const existing = raw ? JSON.parse(raw) : [];
+    const m = {
+      ...buildMoment('Pełny testowy moment ✨ #test', '❤️', SAMPLE_IMAGES[0], { duration: 3 }, 'Kraków, Polska'),
+      timestamp: y.getTime(), dateKey: key,
+      date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+      source: 'gallery',
+    };
+    await persistMoments([m, ...existing]);
+    vibrate(30);
+    showToast('Dodano pełny moment ✨');
+  };
+
+  const handleSimulateGardenState = async (stateId) => {
+    const daysAgo = { blooming: 0, healthy: 2, thirsty: 5, sad: 10 }[stateId] || 0;
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+    const existing = raw ? JSON.parse(raw) : [];
+    const filtered = existing.filter(m => {
+      const daysSince = (Date.now() - m.timestamp) / 86400000;
+      return daysSince > daysAgo + 1;
+    });
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    const key = formatDateToKey(d);
+    const mock = {
+      ...buildMoment(`Stan drzewka: ${stateId} #symulacja`, '😌', null, null, ''),
+      timestamp: d.getTime(), dateKey: key,
+      date: d.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+    };
+    await persistMoments([mock, ...filtered]);
+    vibrate(30);
+    showToast(`🧪 Symulacja: ${stateId}`);
+  };
+
+  const handleClearMoments = async () => {
+    await persistMoments([]);
+    vibrate([0, 40, 40, 40]);
+    showToast('🧪 Wyczyszczono momenty');
+  };
+
+  const handleClearWaterings = async () => {
+    await persistWaterings([]);
+    vibrate([0, 40, 40, 40]);
+    showToast('🧪 Wyczyszczono podlewania');
+  };
+
+  const handleFullReset = async () => {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const backupKeys = allKeys.filter(k => k.startsWith(STORAGE_KEYS.backupPrefix));
+    await AsyncStorage.multiRemove([...Object.values(STORAGE_KEYS), ...backupKeys]);
+    setMoments([]); setCapsules([]); setWaterings([]);
+    setIsTestPanelVisible(false);
+    vibrate([0, 60, 60, 60]);
+    Alert.alert('Reset', 'Aplikacja zresetowana. Uruchom ponownie.');
+  };
+
+  const handleTestNotification = async () => {
+    try {
+      const { scheduleDailyReminder: schedule } = require('./src/notifications');
+      const granted = await requestNotificationPermissions();
+      if (!granted) {
+        Alert.alert('Brak uprawnień', 'Włącz powiadomienia w ustawieniach systemowych.');
+        return;
+      }
+      const result = await schedule(new Date().getHours(), (new Date().getMinutes() + 1) % 60);
+      showToast(result.success ? '🔔 Test zaplanowany (1 min)' : 'Błąd testu');
     } catch (e) {
-      console.error('simulate', e);
+      console.error(e);
+      Alert.alert('Błąd', 'Nie udało się zaplanować testu.');
     }
   };
 
-  const handleSimulateMockMomentWithPhotoAndAudio = async () => {
+  const handleTestCapsuleNotification = async () => {
     try {
-      const y = new Date(); y.setDate(y.getDate() - 1);
-      const key = formatDateToKey(y);
-      const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
-      const existing = raw ? JSON.parse(raw) : [];
-      if (existing.some(m => (m.dateKey || formatDateToKey(new Date(m.timestamp))) === key)) {
-        showToast('Wczoraj już ma wpis 🧪');
-        return;
-      }
-      const m = {
-        ...buildMoment('Testowy moment #test 🚀', '⚡', SAMPLE_IMAGES[0], { duration: 5 }, 'Testowe miejsce'),
-        timestamp: y.getTime(), dateKey: key,
-        date: y.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
+      const result = await scheduleCapsuleNotification('test_id', 'Testowa kapsuła', Date.now() + 60000);
+      showToast(result.success ? '⏳ Test kapsuły zaplanowany' : 'Błąd testu');
+    } catch (e) { console.error(e); }
+  };
+
+  const handleTestStreakNotification = async () => {
+    try {
+      const result = await scheduleStreakNotification(7);
+      showToast(result.success ? '🔥 Test passy zaplanowany' : 'Błąd testu');
+    } catch (e) { console.error(e); }
+  };
+
+  const handleCancelAllNotifications = async () => {
+    await cancelAllNotifications();
+    showToast('🚫 Anulowano wszystkie powiadomienia');
+  };
+
+  const handleUnlockAllAchievements = async () => {
+    // Dodaje wymaganą liczbę wpisów dla wszystkich odznak
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.moments);
+    const existing = raw ? JSON.parse(raw) : [];
+    const needed = 50 - existing.length;
+    if (needed <= 0) {
+      showToast('Już masz wszystkie odznaki!');
+      return;
+    }
+    let newMoments = [...existing];
+    const base = new Date();
+    for (let i = 0; i < needed; i++) {
+      const d = new Date(base); d.setDate(d.getDate() - (i + 1));
+      const key = formatDateToKey(d);
+      const mock = {
+        ...buildMoment(`Symulowany wpis #symulacja`, '😊', i < 5 ? SAMPLE_IMAGES[0] : null, i < 3 ? { duration: 3 } : null, i < 3 ? 'Warszawa' : ''),
+        id: `sim-all-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: d.getTime(), dateKey: key,
+        date: d.toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' }),
       };
-      await persistMoments([m, ...existing]);
-      vibrate(30);
-      showToast('Dodano testowy moment 📷🎙️');
-      setIsTestPanelVisible(false);
-    } catch (e) { console.error('mock', e); }
+      newMoments.push(mock);
+    }
+    await persistMoments(newMoments);
+    vibrate(30);
+    showToast('🧪 Dodano wpisy dla odznak');
+  };
+
+  const handleLockAllAchievements = async () => {
+    await persistMoments([]);
+    vibrate(30);
+    showToast('🧪 Wyczyszczono wszystkie odznaki');
   };
 
   // ─── Memo: filtrowanie ───
@@ -979,6 +1243,13 @@ function AppInner() {
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
     return top && top[1] >= 2 ? { tag: top[0], count: top[1] } : null;
   }, [moments]);
+
+  // ⭐ Ukrycie sekcji z X (na stałe w stanie)
+  const [hiddenSections, setHiddenSections] = useState({});
+  const hideSection = (key) => {
+    vibrate(10);
+    setHiddenSections(prev => ({ ...prev, [key]: true }));
+  };
 
   const filteredMoments = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1085,59 +1356,18 @@ function AppInner() {
     return cells;
   }, [calendarDate, moments, todayCode, theme, showToast]);
 
-  const renderCalendarView = () => {
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
-    const monthName = calendarDate.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' });
-    const weekDays = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nd'];
-
-    return (
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-        <View style={{ marginBottom: 16 }}>
-          <WeekChart data={last7DaysStats} theme={theme} onPress={() => setIsWeeklyReportVisible(true)} title="Wgląd w tydzień" />
-        </View>
-
-        <View style={[dynamicStyles.card, { paddingBottom: 16 }]}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Text style={{ color: theme.text, fontSize: 18, fontWeight: '900', textTransform: 'capitalize' }}>{monthName}</Text>
-            <View style={styles.row}>
-              <TouchableOpacity onPress={() => setCalendarDate(new Date(year, month - 1, 1))} style={[styles.iconButton, { paddingHorizontal: 10 }]}>
-                <Text style={{ fontSize: 18, color: theme.text, fontWeight: 'bold' }}>‹</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setCalendarDate(new Date(year, month + 1, 1))} style={[styles.iconButton, { paddingHorizontal: 10 }]}>
-                <Text style={{ fontSize: 18, color: theme.text, fontWeight: 'bold' }}>›</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-            {weekDays.map(d => <Text key={d} style={{ width: '13%', textAlign: 'center', color: theme.subtext, fontSize: 11, fontWeight: 'bold' }}>{d}</Text>)}
-          </View>
-          <View style={styles.calendarGrid}>{calendarGridElements}</View>
-        </View>
-
-        <Text style={[styles.sectionLabel, { color: theme.subtext }]}>📊 Wgląd w przeszłość</Text>
-
-        <TouchableOpacity
-          style={[dynamicStyles.card, { borderColor: theme.accent, borderWidth: 2 }]}
-          onPress={() => setIsPixelYearVisible(true)}
-        >
-          <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', marginBottom: 6 }}>📆 Rok w pikselach</Text>
-          <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold' }}>Zobacz cały rok {new Date().getFullYear()}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={dynamicStyles.card} onPress={() => setIsNostalgiaVisible(true)}>
-          <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', marginBottom: 6 }}>⏪ Nostalgia</Text>
-          <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold' }}>Co robiłeś tydzień / miesiąc / rok temu?</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    );
-  };
-
+  // ⭐ renderMomentItem — teraz przekazujemy onPlayAudio
   const renderMomentItem = useCallback(({ item }) => (
-    <MomentCard item={item} theme={theme} cardStyle={dynamicStyles.card} onMenu={openActionMenu} />
-  ), [theme, dynamicStyles.card, openActionMenu]);
-
-  // ═══════════════════════════════════════════
+    <MomentCard
+      item={item}
+      theme={theme}
+      cardStyle={dynamicStyles.card}
+      onMenu={openActionMenu}
+      onPlayAudio={() => playAudioFromMoment(item)}
+      isPlayingAudio={playingAudioId === item.id}
+    />
+  ), [theme, dynamicStyles.card, openActionMenu, playingAudioId]);
+    // ═══════════════════════════════════════════
   // EKRAN BLOKADY PIN
   // ═══════════════════════════════════════════
   if (isLocked) {
@@ -1256,14 +1486,6 @@ function AppInner() {
                   <Text style={{ fontSize: 18 }}>{theme.isLight ? '🌙' : '☀️'}</Text>
                 </TouchableOpacity>
 
-                {currentTab === 'home' && (
-                  <TouchableOpacity
-                    style={[styles.iconButton, { marginLeft: 8 }]}
-                    onPress={() => { vibrate(10); setCurrentViewMode(p => p === 'list' ? 'calendar' : 'list'); }}
-                  >
-                    <Text style={{ fontSize: 16 }}>{currentViewMode === 'list' ? '📅' : '📋'}</Text>
-                  </TouchableOpacity>
-                )}
                 <TouchableOpacity onPress={() => setIsSettingsVisible(true)} style={[styles.iconButton, { marginLeft: 8 }]}>
                   <Text style={{ fontSize: 18, color: theme.text }}>⚙️</Text>
                 </TouchableOpacity>
@@ -1274,8 +1496,7 @@ function AppInner() {
           <View style={styles.content}>
 
             {currentTab === 'home' && (
-              currentViewMode === 'calendar' ? renderCalendarView()
-              : isEditing ? (
+              isEditing ? (
                 <View style={dynamicStyles.card}>
                   <Text style={{ color: theme.text, fontSize: 16, fontWeight: 'bold', marginBottom: 10 }}>
                     {editingMomentId ? 'Edytuj wpis' : 'Twój Jeden Moment na dziś'}
@@ -1403,12 +1624,20 @@ function AppInner() {
                           <Text style={{ color: theme.subtext, fontSize: 12, marginTop: 8, textAlign: 'right', fontWeight: '600' }}>— {todayQuote.author}</Text>
                         </View>
 
-                        {showAffirmation && (
+                        {/* Cichy Anioł — z X */}
+                        {showAffirmation && !hiddenSections.affirmation && (
                           <View style={[dynamicStyles.card, { borderColor: theme.accent, borderWidth: 2, backgroundColor: theme.accent + '12' }]}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                               <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase' }}>🕊️ Cichy Anioł</Text>
-                              <TouchableOpacity onPress={async () => { setShowAffirmation(false); await AsyncStorage.setItem(STORAGE_KEYS.affirmationSeen, todayCode); }}>
-                                <Text style={{ color: theme.subtext, fontWeight: 'bold' }}>✕</Text>
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  vibrate(10);
+                                  setShowAffirmation(false);
+                                  await AsyncStorage.setItem(STORAGE_KEYS.affirmationSeen, todayCode);
+                                }}
+                                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                              >
+                                <Text style={{ color: theme.subtext, fontWeight: 'bold', fontSize: 18 }}>✕</Text>
                               </TouchableOpacity>
                             </View>
                             <Text style={{ color: theme.text, fontSize: 15, marginTop: 8, fontStyle: 'italic', lineHeight: 22 }}>
@@ -1417,9 +1646,18 @@ function AppInner() {
                           </View>
                         )}
 
-                        {actionChallenge && (
+                        {/* Wdzięczność w akcji — z X */}
+                        {actionChallenge && !hiddenSections.actionChallenge && (
                           <View style={[dynamicStyles.card, { borderColor: theme.accent, borderWidth: 2, backgroundColor: theme.accent + '15' }]}>
-                            <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', marginBottom: 6 }}>✨ Wdzięczność w akcji</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                              <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase' }}>✨ Wdzięczność w akcji</Text>
+                              <TouchableOpacity
+                                onPress={() => hideSection('actionChallenge')}
+                                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                              >
+                                <Text style={{ color: theme.subtext, fontWeight: 'bold', fontSize: 18 }}>✕</Text>
+                              </TouchableOpacity>
+                            </View>
                             <Text style={{ color: theme.text, fontSize: 14, lineHeight: 20 }}>
                               Wspomniałeś o <Text style={{ fontWeight: 'bold' }}>{actionChallenge.tag}</Text> aż {actionChallenge.count} razy w tym tygodniu.
                             </Text>
@@ -1596,7 +1834,25 @@ function AppInner() {
 
             {currentTab === 'stats' && (
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-                <Text style={{ color: theme.text, fontSize: 24, fontWeight: '900', marginBottom: 16 }}>Twoje statystyki</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <Text style={{ color: theme.text, fontSize: 24, fontWeight: '900' }}>Statystyki</Text>
+                  <TouchableOpacity
+                    onPress={() => { vibrate(10); setCurrentTab('calendar'); }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 16,
+                      backgroundColor: theme.card,
+                      borderWidth: 1,
+                      borderColor: theme.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, marginRight: 4 }}>📅</Text>
+                    <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold' }}>Kalendarz</Text>
+                  </TouchableOpacity>
+                </View>
 
                 <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
                   <View style={[dynamicStyles.card, { flex: 1, marginBottom: 0, alignItems: 'center', paddingVertical: 18 }]}>
@@ -1612,6 +1868,9 @@ function AppInner() {
                     <Text style={{ color: theme.subtext, fontSize: 11, fontWeight: 'bold', marginTop: 4, textTransform: 'uppercase' }}>Odznak</Text>
                   </View>
                 </View>
+
+                <Text style={[styles.sectionLabel, { color: theme.subtext }]}>📅 Wgląd w tydzień</Text>
+                <WeekChart data={last7DaysStats} theme={theme} onPress={() => setIsWeeklyReportVisible(true)} title="Wgląd w tydzień" />
 
                 <Text style={[styles.sectionLabel, { color: theme.subtext }]}>💫 Twój klimat</Text>
                 <View style={dynamicStyles.card}>
@@ -1687,12 +1946,68 @@ function AppInner() {
                   <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold' }}>Wiadomości do przyszłego siebie</Text>
                   <Text style={{ color: theme.subtext, fontSize: 12, marginTop: 4 }}>{capsules.length} kapsuł</Text>
                 </TouchableOpacity>
+              </ScrollView>
+            )}
+
+            {currentTab === 'calendar' && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <Text style={{ color: theme.text, fontSize: 24, fontWeight: '900' }}>Kalendarz</Text>
+                  <TouchableOpacity
+                    onPress={() => { vibrate(10); setCurrentTab('stats'); }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 16,
+                      backgroundColor: theme.card,
+                      borderWidth: 1,
+                      borderColor: theme.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, marginRight: 4 }}>📊</Text>
+                    <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold' }}>Statystyki</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ marginBottom: 16 }}>
+                  <WeekChart data={last7DaysStats} theme={theme} onPress={() => setIsWeeklyReportVisible(true)} title="Wgląd w tydzień" />
+                </View>
+
+                <View style={[dynamicStyles.card, { paddingBottom: 16 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={{ color: theme.text, fontSize: 18, fontWeight: '900', textTransform: 'capitalize' }}>
+                      {calendarDate.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' })}
+                    </Text>
+                    <View style={styles.row}>
+                      <TouchableOpacity onPress={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))} style={[styles.iconButton, { paddingHorizontal: 10 }]}>
+                        <Text style={{ fontSize: 18, color: theme.text, fontWeight: 'bold' }}>‹</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))} style={[styles.iconButton, { paddingHorizontal: 10 }]}>
+                        <Text style={{ fontSize: 18, color: theme.text, fontWeight: 'bold' }}>›</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                    {['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nd'].map(d => <Text key={d} style={{ width: '13%', textAlign: 'center', color: theme.subtext, fontSize: 11, fontWeight: 'bold' }}>{d}</Text>)}
+                  </View>
+                  <View style={styles.calendarGrid}>{calendarGridElements}</View>
+                </View>
+
+                <Text style={[styles.sectionLabel, { color: theme.subtext }]}>📊 Wgląd w przeszłość</Text>
 
                 <TouchableOpacity
-                  style={[dynamicStyles.card, { backgroundColor: 'transparent', borderStyle: 'dashed', borderColor: theme.subtext, marginTop: 8 }]}
-                  onPress={() => setIsTestPanelVisible(true)}
+                  style={[dynamicStyles.card, { borderColor: theme.accent, borderWidth: 2 }]}
+                  onPress={() => setIsPixelYearVisible(true)}
                 >
-                  <Text style={{ color: theme.subtext, fontSize: 11, fontWeight: '900', textAlign: 'center', textTransform: 'uppercase' }}>🧪 Panel testowy</Text>
+                  <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', marginBottom: 6 }}>📆 Rok w pikselach</Text>
+                  <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold' }}>Zobacz cały rok {new Date().getFullYear()}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={dynamicStyles.card} onPress={() => setIsNostalgiaVisible(true)}>
+                  <Text style={{ color: theme.accent, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', marginBottom: 6 }}>⏪ Nostalgia</Text>
+                  <Text style={{ color: theme.text, fontSize: 14, fontWeight: 'bold' }}>Co robiłeś tydzień / miesiąc / rok temu?</Text>
                 </TouchableOpacity>
               </ScrollView>
             )}
@@ -1711,7 +2026,7 @@ function AppInner() {
 
           </View>
 
-          {/* ⭐ Pasek nawigacji z SafeAreaInsets */}
+          {/* Pasek nawigacji z SafeAreaInsets */}
           <View style={[
             styles.bottomNavBar,
             {
@@ -1726,7 +2041,7 @@ function AppInner() {
               <Text style={{ color: currentTab === 'home' ? theme.text : theme.subtext, fontSize: 10, fontWeight: 'bold', marginTop: 4 }}>Start</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.navItem} onPress={() => { vibrate(8); setCurrentTab('stats'); }}>
-              <Text style={{ fontSize: 20, opacity: currentTab === 'stats' ? 1 : 0.4 }}>🏆</Text>
+              <Text style={{ fontSize: 20, opacity: currentTab === 'stats' ? 1 : 0.4 }}>📊</Text>
               <Text style={{ color: currentTab === 'stats' ? theme.text : theme.subtext, fontSize: 10, fontWeight: 'bold', marginTop: 4 }}>Statystyki</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.navItem} onPress={() => { vibrate(8); setCurrentTab('tree'); }}>
@@ -1740,7 +2055,7 @@ function AppInner() {
 
       <Toast message={toastMessage} theme={theme} actionLabel={toastAction?.label} onAction={toastAction?.fn} />
 
-      {/* ⭐ NOWE: Modal wyszukiwania */}
+      {/* Modal wyszukiwania */}
       <SearchModal
         visible={isSearchModalVisible}
         onClose={() => setIsSearchModalVisible(false)}
@@ -1759,6 +2074,44 @@ function AppInner() {
         styles={styles}
       />
 
+      {/* Panel testowy */}
+      <TestPanel
+        visible={isTestPanelVisible}
+        onClose={() => setIsTestPanelVisible(false)}
+        theme={theme}
+        styles={styles}
+        dynamicStyles={dynamicStyles}
+        onSimulateStreak={handleSimulateStreakDays}
+        onAddPhotoMoment={handleAddPhotoMoment}
+        onAddAudioMoment={handleAddAudioMoment}
+        onAddGpsMoment={handleAddGpsMoment}
+        onAddFullMoment={handleAddFullMoment}
+        onWaterNow={waterGarden}
+        onSimulateGardenState={handleSimulateGardenState}
+        onUnlockAllAchievements={handleUnlockAllAchievements}
+        onLockAllAchievements={handleLockAllAchievements}
+        onTestNotification={handleTestNotification}
+        onTestCapsuleNotification={handleTestCapsuleNotification}
+        onTestStreakNotification={handleTestStreakNotification}
+        onCancelAllNotifications={handleCancelAllNotifications}
+        onClearMoments={handleClearMoments}
+        onClearWaterings={handleClearWaterings}
+        onFullReset={handleFullReset}
+        currentStreak={currentStreak}
+        wateringsCount={waterings.length}
+        momentsCount={moments.length}
+      />
+
+      {/* Modal eksportu */}
+      <ExportModal
+        visible={isExportModalVisible}
+        onClose={() => setIsExportModalVisible(false)}
+        theme={theme}
+        styles={styles}
+        dynamicStyles={dynamicStyles}
+        moments={moments}
+      />
+
       {/* ACTION MENU */}
       <Modal visible={!!actionMoment} transparent animationType="fade" onRequestClose={() => setActionMoment(null)}>
         <TouchableOpacity style={styles.modalOverlayCenter} activeOpacity={1} onPress={() => setActionMoment(null)}>
@@ -1770,6 +2123,12 @@ function AppInner() {
             <Text style={{ color: theme.text, fontSize: 14, textAlign: 'center', marginBottom: 16 }} numberOfLines={3}>
               "{actionMoment?.text}"
             </Text>
+            {actionMoment?.audioNote && (
+              <TouchableOpacity style={[styles.actionRowBtn, { borderColor: theme.accent }]}
+                onPress={() => { const m = actionMoment; setActionMoment(null); if (m) playAudioFromMoment(m); }}>
+                <Text style={{ color: theme.accent, fontWeight: 'bold' }}>▶️ Odtwórz nagranie ({actionMoment.audioNote.duration}s)</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[styles.actionRowBtn, { borderColor: actionMoment?.isFavorite ? theme.accent : theme.border }]}
               onPress={() => { const id = actionMoment?.id; setActionMoment(null); if (id) toggleFavorite(id); }}
@@ -1822,29 +2181,6 @@ function AppInner() {
             </ScrollView>
             <TouchableOpacity style={[styles.mainButton, { backgroundColor: theme.accent, marginTop: 12 }]} onPress={() => setIsAchievementsVisible(false)}>
               <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Zamknij</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* TEST PANEL */}
-      <Modal visible={isTestPanelVisible} transparent animationType="fade" onRequestClose={() => setIsTestPanelVisible(false)}>
-        <View style={styles.modalOverlayCenter}>
-          <View style={[styles.modalContentCenter, { backgroundColor: theme.card, borderColor: theme.border, borderWidth: theme.borderWidth }]}>
-            <Text style={{ color: theme.text, fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 16 }}>🧪 Panel Testowy</Text>
-            <View style={{ gap: 8 }}>
-              <TouchableOpacity style={[styles.mainButton, { backgroundColor: theme.border }]} onPress={() => handleSimulateStreakDays(3)}>
-                <Text style={{ color: theme.text, fontWeight: 'bold' }}>+ 3 dni passy</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.mainButton, { backgroundColor: theme.border }]} onPress={() => handleSimulateStreakDays(7)}>
-                <Text style={{ color: theme.text, fontWeight: 'bold' }}>+ 7 dni passy</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.mainButton, { backgroundColor: theme.border }]} onPress={handleSimulateMockMomentWithPhotoAndAudio}>
-                <Text style={{ color: theme.text, fontWeight: 'bold' }}>+ Foto i Głos (wczoraj)</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={{ marginTop: 12, padding: 8 }} onPress={() => setIsTestPanelVisible(false)}>
-              <Text style={{ color: theme.subtext, fontWeight: 'bold', textAlign: 'center' }}>Zamknij</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2098,6 +2434,7 @@ function AppInner() {
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
+
               {/* Powiadomienia */}
               <View style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -2123,6 +2460,17 @@ function AppInner() {
                 )}
               </View>
 
+              {/* Ukryj pasek systemowy */}
+              <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]} onPress={toggleHideSystemBar}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: theme.text, fontWeight: 'bold' }}>📱 Ukryj pasek systemowy</Text>
+                  <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>
+                    {hideSystemBar ? 'Ukryty (immersive)' : 'Widoczny'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 20 }}>{hideSystemBar ? '✓' : '○'}</Text>
+              </TouchableOpacity>
+
               {/* PIN */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]} onPress={() => setIsPinModalVisible(true)}>
                 <Text style={{ color: theme.text, fontWeight: 'bold' }}>🔒 Zabezpieczenie PIN</Text>
@@ -2146,19 +2494,41 @@ function AppInner() {
                 <Text style={{ color: theme.accent, fontWeight: 'bold' }}>{theme.name} {theme.icon} ▾</Text>
               </TouchableOpacity>
 
-              {/* ⭐ Changelog */}
+              {/* Changelog */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, borderColor: theme.accent, borderWidth: 2 }]} onPress={() => { setIsSettingsVisible(false); setIsChangelogVisible(true); }}>
                 <Text style={{ color: theme.text, fontWeight: 'bold' }}>📜 Co nowego?</Text>
                 <Text style={{ color: theme.accent, fontWeight: 'bold' }}>Wersja {CURRENT_VERSION} ▾</Text>
               </TouchableOpacity>
 
-              {/* Export */}
-              <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, marginBottom: 8 }]} onPress={exportDataJSON}>
-                <Text style={{ color: theme.accent, textAlign: 'center', fontWeight: 'bold' }}>Eksportuj jako JSON</Text>
+              {/* Eksport — jedno okno */}
+              <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12 }]} onPress={() => { setIsSettingsVisible(false); setIsExportModalVisible(true); }}>
+                <Text style={{ color: theme.text, fontWeight: 'bold' }}>📤 Eksport danych</Text>
+                <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>Wybierz format i udostępnij ▾</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, marginBottom: 12 }]} onPress={exportDataText}>
-                <Text style={{ color: theme.accent, textAlign: 'center', fontWeight: 'bold' }}>📝 Eksportuj jako tekst</Text>
+
+              {/* Tryb testowy */}
+              <TouchableOpacity
+                style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderColor: testModeEnabled ? theme.accent : theme.border, borderWidth: 1 }]}
+                onPress={toggleTestMode}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: theme.text, fontWeight: 'bold' }}>🧪 Tryb testowy</Text>
+                  <Text style={{ color: theme.subtext, fontSize: 11, marginTop: 2 }}>
+                    {testModeEnabled ? 'Włączony — panel dostępny' : 'Wyłączony'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 20 }}>{testModeEnabled ? '✓' : '○'}</Text>
               </TouchableOpacity>
+
+              {/* Otwórz panel testowy — tylko gdy tryb włączony */}
+              {testModeEnabled && (
+                <TouchableOpacity
+                  style={[dynamicStyles.card, { paddingVertical: 14, marginBottom: 12, backgroundColor: theme.accent + '15', borderColor: theme.accent, borderWidth: 2 }]}
+                  onPress={() => { setIsSettingsVisible(false); setIsTestPanelVisible(true); }}
+                >
+                  <Text style={{ color: theme.accent, fontWeight: '900', textAlign: 'center' }}>🧪 OTWÓRZ PANEL TESTOWY</Text>
+                </TouchableOpacity>
+              )}
 
               {/* Reset */}
               <TouchableOpacity style={[dynamicStyles.card, { paddingVertical: 12, borderColor: 'red', borderWidth: 1 }]} onPress={resetApp}>
@@ -2170,7 +2540,7 @@ function AppInner() {
         </View>
       </Modal>
 
-      {/* ⭐ CHANGELOG MODAL */}
+      {/* CHANGELOG MODAL */}
       <Modal visible={isChangelogVisible} animationType="slide" transparent onRequestClose={() => setIsChangelogVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: theme.bg, borderColor: theme.border, borderWidth: theme.borderWidth, maxHeight: '90%' }]}>
@@ -2181,56 +2551,40 @@ function AppInner() {
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
-              {CHANGELOG.map((entry, idx) => (
+              {CHANGELOG.map((entry) => (
                 <View key={entry.version} style={[dynamicStyles.card, entry.isCurrent && { borderColor: theme.accent, borderWidth: 2 }]}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <Text style={{ color: theme.text, fontWeight: '900', fontSize: 18 }}>
-                      v{entry.version}
-                    </Text>
+                    <Text style={{ color: theme.text, fontWeight: '900', fontSize: 18 }}>v{entry.version}</Text>
                     {entry.isCurrent && (
                       <View style={{ backgroundColor: theme.accent, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
                         <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>AKTUALNA</Text>
                       </View>
                     )}
                   </View>
-                  {entry.badge && (
-                    <Text style={{ color: theme.accent, fontWeight: 'bold', fontSize: 12, marginBottom: 4 }}>
-                      {entry.badge}
-                    </Text>
-                  )}
-                  <Text style={{ color: theme.subtext, fontSize: 11, marginBottom: 12 }}>
-                    {entry.date}
-                  </Text>
+                  {entry.badge && <Text style={{ color: theme.accent, fontWeight: 'bold', fontSize: 12, marginBottom: 4 }}>{entry.badge}</Text>}
+                  <Text style={{ color: theme.subtext, fontSize: 11, marginBottom: 12 }}>{entry.date}</Text>
 
                   {entry.changes.added?.length > 0 && (
                     <View style={{ marginBottom: 10 }}>
                       <Text style={{ color: '#10B981', fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>✨ Dodano</Text>
                       {entry.changes.added.map((item, i) => (
-                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>
-                          • {item}
-                        </Text>
+                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>• {item}</Text>
                       ))}
                     </View>
                   )}
-
                   {entry.changes.fixed?.length > 0 && (
                     <View style={{ marginBottom: 10 }}>
                       <Text style={{ color: '#F59E0B', fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>🐛 Naprawiono</Text>
                       {entry.changes.fixed.map((item, i) => (
-                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>
-                          • {item}
-                        </Text>
+                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>• {item}</Text>
                       ))}
                     </View>
                   )}
-
                   {entry.changes.changed?.length > 0 && (
                     <View>
                       <Text style={{ color: '#3B82F6', fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>🔄 Zmieniono</Text>
                       {entry.changes.changed.map((item, i) => (
-                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>
-                          • {item}
-                        </Text>
+                        <Text key={i} style={{ color: theme.text, fontSize: 13, lineHeight: 20, marginLeft: 8 }}>• {item}</Text>
                       ))}
                     </View>
                   )}
@@ -2252,9 +2606,7 @@ function AppInner() {
             {themeList.map(t => (
               <TouchableOpacity key={t.id} onPress={() => changeTheme(t.id)}
                 style={{ padding: 16, borderWidth: 2, borderColor: currentThemeId === t.id ? theme.accent : theme.border, borderRadius: 12, marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: theme.text, fontWeight: 'bold', fontSize: 16 }}>
-                  {t.icon}  {t.name}
-                </Text>
+                <Text style={{ color: theme.text, fontWeight: 'bold', fontSize: 16 }}>{t.icon}  {t.name}</Text>
                 {currentThemeId === t.id && <Text style={{ color: theme.accent, fontSize: 18 }}>✓</Text>}
               </TouchableOpacity>
             ))}
@@ -2314,3 +2666,4 @@ function AppInner() {
     </SafeAreaView>
   );
 }
+  // ═══ DALSZA CZĘŚĆ (JSX) W NASTĘPNEJ WIADOMOŚCI ═══
