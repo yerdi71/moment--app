@@ -1,259 +1,136 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View, Text, TouchableOpacity, StatusBar as RNStatusBar,
-  Linking, Alert, Platform,
-} from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import {
-  getColors, TYPOGRAPHY, SPACING, RADIUS,
-} from './src/theme';
-import {
-  loadMoments, loadSettings,
-  isOnboardingDone, markOnboardingDone,
-  getTodayMoment, checkForUpdates,
-  getTodayKey,
-} from './src/helpers';
-import {
-  LoadingScreen,
-  OnboardingScreen,
-  TodayScreen,
-  WriteScreen,
-  SuccessScreen,
-  MomentViewScreen,
-  SettingsScreen,
-} from './src/screens';
+import React, { useState } from 'react';
+import { View, StyleSheet, SafeAreaView, StatusBar, Alert } from 'react-native';
+import { COLORS } from './src/theme';
+
+// Importujemy ekrany z osobnych plików
+import LoadingScreen from './src/screens/Loading';
+import OnboardingScreen from './src/screens/Onboarding';
+import HomeScreen from './src/screens/Home';
+import WriteScreen from './src/screens/Write';
+import SuccessScreen from './src/screens/Success';
+import MomentsScreen from './src/screens/Moments';
+import MomentViewScreen from './src/screens/MomentView';
+import ProfileScreen from './src/screens/Profile';
+import SettingsScreen from './src/screens/Settings';
+import AppearanceScreen from './src/screens/Appearance';
+import PinScreen from './src/screens/Pin';
+
+import { analyzeEmotion } from './src/algorithm'; // Importujemy algorytm
 
 export default function App() {
-  return (
-    <SafeAreaProvider>
-      <AppInner />
-    </SafeAreaProvider>
-  );
-}
-
-function AppInner() {
   const [screen, setScreen] = useState('loading');
-  const [settings, setSettings] = useState({ theme: 'light' });
-  const [todayMoment, setTodayMoment] = useState(null);
-  const [currentMoment, setCurrentMoment] = useState(null);
-  const [updateInfo, setUpdateInfo] = useState(null);
+  const [selectedMoment, setSelectedMoment] = useState(null);
 
-  const colors = getColors(settings.theme);
-
-  // ═══ ŁADOWANIE STARTU ═══
-  const bootstrap = useCallback(async () => {
-    const [loadedSettings, loadedMoments] = await Promise.all([
-      loadSettings(),
-      loadMoments(),
-    ]);
-
-    setSettings(loadedSettings);
-
-    // Znajdź dzisiejszy moment
-    const todayKey = getTodayKey();
-    const today = loadedMoments.find(m => m.dateKey === todayKey);
-    setTodayMoment(today || null);
-
-    // Sprawdź aktualizacje (nie blokuje UI)
-    checkForUpdates()
-      .then(result => {
-        if (result && result.hasUpdate) setUpdateInfo(result);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    bootstrap();
-  }, [bootstrap]);
-
-  // ═══ PO LOADING ═══
-  const handleLoadingDone = useCallback(async () => {
-    const done = await isOnboardingDone();
-    setScreen(done ? 'today' : 'onboarding');
-  }, []);
-
-  // ═══ PO ONBOARDING ═══
-  const handleOnboardingDone = useCallback(async () => {
-    await markOnboardingDone();
-    setScreen('today');
-  }, []);
-
-  // ═══ PO ZAPISIE ═══
-  const handleMomentSaved = useCallback((moment) => {
-    setCurrentMoment(moment);
-    setTodayMoment(moment);
+  // Funkcja zapisu – analizuje tekst i przechodzi do ekranu sukcesu
+  const handleSave = (text) => {
+    const analysis = analyzeEmotion(text);
+    setSelectedMoment({ text, emotion: analysis.emotion, intensity: analysis.intensity });
     setScreen('success');
-  }, []);
+  };
 
-  // ═══ PO USUNIĘCIU ═══
-  const handleMomentDeleted = useCallback(async () => {
-    const today = await getTodayMoment();
-    setTodayMoment(today || null);
-    setScreen('today');
-  }, []);
+  const handlePinDone = () => {
+    Alert.alert('PIN ustawiony ✓', 'Twój kod został zapisany (na razie tylko w tej sesji).');
+    setScreen('settings');
+  };
 
-  // ═══ EDYCJA (na razie placeholder) ═══
-  const handleEditMoment = useCallback(() => {
-    Alert.alert(
-      'Edycja wpisu',
-      'Funkcja edycji będzie dostępna w kolejnej wersji.',
-      [{ text: 'OK' }]
-    );
-  }, []);
-
-  // ═══ ZMIANA USTAWIEŃ ═══
-  const handleUpdateSettings = useCallback((newSettings) => {
-    setSettings(newSettings);
-  }, []);
-
-  // ═══ RENDEROWANIE EKRANU ═══
-  const renderScreen = () => {
-    switch (screen) {
-      case 'loading':
-        return <LoadingScreen colors={colors} onDone={handleLoadingDone} />;
-
-      case 'onboarding':
-        return <OnboardingScreen colors={colors} onDone={handleOnboardingDone} />;
-
-      case 'today':
-        return (
-          <TodayScreen
-            colors={colors}
-            todayMoment={todayMoment}
-            onWrite={() => setScreen('write')}
-            onOpenSettings={() => setScreen('settings')}
-            onOpenMoment={(m) => {
-              setCurrentMoment(m);
-              setScreen('moment');
-            }}
-          />
-        );
-
-      case 'write':
-        return (
-          <WriteScreen
-            colors={colors}
-            onCancel={() => setScreen('today')}
-            onSaved={handleMomentSaved}
-          />
-        );
-
-      case 'success':
-        return (
-          <SuccessScreen
-            colors={colors}
-            moment={currentMoment}
-            onViewMoment={() => setScreen('moment')}
-            onGoHome={() => setScreen('today')}
-          />
-        );
-
-      case 'moment':
-        return (
-          <MomentViewScreen
-            colors={colors}
-            moment={currentMoment}
-            onBack={() => setScreen('today')}
-            onEdit={handleEditMoment}
-            onDelete={handleMomentDeleted}
-          />
-        );
-
-      case 'settings':
-        return (
-          <SettingsScreen
-            colors={colors}
-            settings={settings}
-            onBack={() => setScreen('today')}
-            onUpdate={handleUpdateSettings}
-          />
-        );
-
-      default:
-        return <LoadingScreen colors={colors} onDone={handleLoadingDone} />;
-    }
+  const handleOpenMoment = (moment) => {
+    setSelectedMoment(moment);
+    setScreen('moment');
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <RNStatusBar
-        barStyle={settings.theme === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={colors.bg}
-      />
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" />
+      
+      {screen === 'loading' && (
+        <SafeAreaView style={styles.safe}>
+          <LoadingScreen onDone={() => setScreen('onboard')} />
+        </SafeAreaView>
+      )}
+      
+      {screen === 'onboard' && (
+        <OnboardingScreen onDone={() => setScreen('home')} />
+      )}
 
-      {renderScreen()}
+      {screen === 'home' && (
+        <SafeAreaView style={styles.safe}>
+          <HomeScreen
+            onSettings={() => setScreen('settings')}
+            onWrite={() => setScreen('write')}
+            onOpenLast={() => setScreen('moment')}
+            onMoments={() => setScreen('moments')}
+            onProfile={() => setScreen('profile')}
+          />
+        </SafeAreaView>
+      )}
 
-      {/* BANNER AKTUALIZACJI */}
-      {updateInfo && screen === 'today' && (
-        <UpdateBanner
-          colors={colors}
-          info={updateInfo}
-          onClose={() => setUpdateInfo(null)}
-        />
+      {screen === 'write' && (
+        <SafeAreaView style={styles.safe}>
+          <WriteScreen
+            onBack={() => setScreen('home')}
+            onSave={handleSave}
+          />
+        </SafeAreaView>
+      )}
+
+      {screen === 'success' && (
+        <SafeAreaView style={styles.safe}>
+          <SuccessScreen onBack={() => setScreen('home')} />
+        </SafeAreaView>
+      )}
+
+      {screen === 'moments' && (
+        <SafeAreaView style={styles.safe}>
+          <MomentsScreen
+            onBack={() => setScreen('home')}
+            onOpenMoment={handleOpenMoment}
+            onHome={() => setScreen('home')}
+            onProfile={() => setScreen('profile')}
+          />
+        </SafeAreaView>
+      )}
+
+      {screen === 'moment' && (
+        <SafeAreaView style={styles.safe}>
+          <MomentViewScreen onBack={() => setScreen('home')} moment={selectedMoment} />
+        </SafeAreaView>
+      )}
+
+      {screen === 'profile' && (
+        <SafeAreaView style={styles.safe}>
+          <ProfileScreen
+            onBack={() => setScreen('home')}
+            onOpenLast={() => setScreen('moment')}
+            onMoments={() => setScreen('moments')}
+            onSettings={() => setScreen('settings')}
+          />
+        </SafeAreaView>
+      )}
+
+      {screen === 'settings' && (
+        <SafeAreaView style={styles.safe}>
+          <SettingsScreen
+            onBack={() => setScreen('home')}
+            onAppearance={() => setScreen('appearance')}
+            onPin={() => setScreen('pin')}
+          />
+        </SafeAreaView>
+      )}
+
+      {screen === 'appearance' && (
+        <SafeAreaView style={styles.safe}>
+          <AppearanceScreen onBack={() => setScreen('settings')} />
+        </SafeAreaView>
+      )}
+
+      {screen === 'pin' && (
+        <PinScreen onBack={() => setScreen('settings')} onDone={handlePinDone} />
       )}
     </View>
   );
 }
 
-// ═══════════════════════════════════════════
-// BANNER AKTUALIZACJI
-// ═══════════════════════════════════════════
-
-const UpdateBanner = ({ colors, info, onClose }) => {
-  const topOffset = Platform.OS === 'android'
-    ? (RNStatusBar.currentHeight || 24) + 12
-    : 60;
-
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        top: topOffset,
-        left: SPACING.m,
-        right: SPACING.m,
-        backgroundColor: colors.card,
-        borderRadius: RADIUS.card,
-        borderWidth: 2,
-        borderColor: colors.accent,
-        padding: SPACING.m,
-        flexDirection: 'row',
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-        elevation: 6,
-      }}
-    >
-      <Text style={{ fontSize: 24, marginRight: SPACING.s }}>🎉</Text>
-      <View style={{ flex: 1 }}>
-        <Text style={[
-          TYPOGRAPHY.body,
-          { color: colors.text, fontWeight: '700' },
-        ]}>
-          Nowa wersja {info.latestVersion}!
-        </Text>
-        <TouchableOpacity onPress={() => Linking.openURL(info.url)}>
-          <Text style={[
-            TYPOGRAPHY.caption,
-            { color: colors.accent, marginTop: 2, fontWeight: '700' },
-          ]}>
-            Zaktualizuj  →
-          </Text>
-        </TouchableOpacity>
-      </View>
-      <TouchableOpacity
-        onPress={onClose}
-        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      >
-        <Text style={{
-          color: colors.textSecondary,
-          fontSize: 18,
-          fontWeight: '700',
-        }}>
-          ✕
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1 },
+});
