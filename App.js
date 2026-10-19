@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, SafeAreaView, StatusBar, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from './src/theme';
 
-// Importujemy ekrany z osobnych plików
 import LoadingScreen from './src/screens/Loading';
 import OnboardingScreen from './src/screens/Onboarding';
 import HomeScreen from './src/screens/Home';
@@ -15,27 +15,96 @@ import SettingsScreen from './src/screens/Settings';
 import AppearanceScreen from './src/screens/Appearance';
 import PinScreen from './src/screens/Pin';
 
-import { analyzeEmotion } from './src/algorithm'; // Importujemy algorytm
+import { analyzeEmotion } from './src/algorithm';
+
+const STORAGE_KEY = '@jeden_moment_entries';
 
 export default function App() {
   const [screen, setScreen] = useState('loading');
+  const [entries, setEntries] = useState([]);
   const [selectedMoment, setSelectedMoment] = useState(null);
 
-  // Funkcja zapisu – analizuje tekst i przechodzi do ekranu sukcesu
-  const handleSave = (text) => {
+  // 1. Ładowanie wpisów przy starcie
+  useEffect(() => {
+    const loadEntries = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(STORAGE_KEY);
+        if (saved) setEntries(JSON.parse(saved));
+      } catch (e) {
+        console.log('Błąd odczytu bazy', e);
+      }
+    };
+    loadEntries();
+  }, []);
+
+  // Sprawdzanie, czy dzisiaj już dodano wpis
+  const today = new Date().toLocaleDateString('pl-PL');
+  const todayEntry = entries.find(e => e.fullDate === today);
+
+  // 2. Zapis nowego wpisu
+  const handleSave = async (text) => {
     const analysis = analyzeEmotion(text);
-    setSelectedMoment({ text, emotion: analysis.emotion, intensity: analysis.intensity });
+    const now = new Date();
+
+    const newEntry = {
+      id: now.getTime().toString(),
+      text,
+      emotion: analysis.emotion,
+      intensity: analysis.intensity,
+      date: now.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' }),
+      time: now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+      fullDate: today // np. 19.10.2026 (do blokady)
+    };
+    
+    const updated = [newEntry, ...entries];
+    setEntries(updated);
+    
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.log('Błąd zapisu', e);
+    }
+    
+    setSelectedMoment(newEntry);
     setScreen('success');
   };
 
+  // 3. Otwieranie ekranu pisania (z blokadą)
+  const handleTryWrite = () => {
+    if (todayEntry) {
+      Alert.alert(
+        'Na dziś to już Twój moment.',
+        'Zgodnie z filozofią aplikacji, dodajemy tylko jeden wpis dziennie. Możesz edytować lub usunąć dzisiejszy wpis.',
+        [
+          { text: 'Zobacz dzisiejszy', onPress: () => { setSelectedMoment(todayEntry); setScreen('moment'); } },
+          { text: 'Anuluj', style: 'cancel' }
+        ]
+      );
+    } else {
+      setScreen('write');
+    }
+  };
+
   const handlePinDone = () => {
-    Alert.alert('PIN ustawiony ✓', 'Twój kod został zapisany (na razie tylko w tej sesji).');
+    Alert.alert('PIN ustawiony ✓', 'Twój kod został zapisany.');
     setScreen('settings');
   };
 
   const handleOpenMoment = (moment) => {
     setSelectedMoment(moment);
     setScreen('moment');
+  };
+
+  // Usuwanie wpisu
+  const handleDelete = async (id) => {
+    const updated = entries.filter(e => e.id !== id);
+    setEntries(updated);
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      setScreen('home');
+    } catch (e) {
+      console.log('Błąd usuwania', e);
+    }
   };
 
   return (
@@ -56,10 +125,11 @@ export default function App() {
         <SafeAreaView style={styles.safe}>
           <HomeScreen
             onSettings={() => setScreen('settings')}
-            onWrite={() => setScreen('write')}
-            onOpenLast={() => setScreen('moment')}
+            onWrite={handleTryWrite}
+            onOpenLast={() => { if(entries[0]) handleOpenMoment(entries[0]); }}
             onMoments={() => setScreen('moments')}
             onProfile={() => setScreen('profile')}
+            lastEntry={entries[0]}
           />
         </SafeAreaView>
       )}
@@ -86,13 +156,18 @@ export default function App() {
             onOpenMoment={handleOpenMoment}
             onHome={() => setScreen('home')}
             onProfile={() => setScreen('profile')}
+            entries={entries}
           />
         </SafeAreaView>
       )}
 
       {screen === 'moment' && (
         <SafeAreaView style={styles.safe}>
-          <MomentViewScreen onBack={() => setScreen('home')} moment={selectedMoment} />
+          <MomentViewScreen 
+            onBack={() => setScreen('home')} 
+            moment={selectedMoment} 
+            onDelete={handleDelete}
+          />
         </SafeAreaView>
       )}
 
@@ -100,9 +175,10 @@ export default function App() {
         <SafeAreaView style={styles.safe}>
           <ProfileScreen
             onBack={() => setScreen('home')}
-            onOpenLast={() => setScreen('moment')}
+            onOpenLast={() => { if(entries[0]) handleOpenMoment(entries[0]); }}
             onMoments={() => setScreen('moments')}
             onSettings={() => setScreen('settings')}
+            entries={entries}
           />
         </SafeAreaView>
       )}
