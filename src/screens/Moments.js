@@ -4,21 +4,29 @@ import { COLORS, SCREEN, HIT_SLOP } from '../theme';
 import { StarField, MountainScene } from '../components/Art';
 import { EmotionBadge, BottomNav } from '../components/UI';
 
-// Na razie dane statyczne, ale struktura jest gotowa pod bazę AsyncStorage
-const SAMPLE_MONTHS = [
-  {
-    id: 'oct2026', label: 'Październik 2026', count: 3,
-    items: [
-      { id: '1', date: '15 października 2026', time: '20:14', text: '„Dziś poczułem spokój. Małe rzeczy naprawdę potrafią cieszyć."', emotion: 'calm' },
-      { id: '2', date: '8 października 2026', time: '19:42', text: '„Cisza, kawa i ten widok. Dobrze być tu i teraz."', emotion: 'joy' },
-      { id: '3', date: '2 października 2026', time: '18:27', text: '„Małe chwile naprawdę mają znaczenie."', emotion: 'power' },
-    ],
-  },
-];
-
-export default function MomentsScreen({ onBack, onOpenMoment, onHome, onProfile }) {
-  const [expanded, setExpanded] = useState({ oct2026: true });
+export default function MomentsScreen({ onBack, onOpenMoment, onHome, onProfile, entries = [] }) {
+  const [expanded, setExpanded] = useState({});
   const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  // Grupowanie wpisów po miesiącach
+  const grouped = entries.reduce((acc, entry) => {
+    // Wyciągamy miesiąc i rok z daty (np. "19 października 2026")
+    const parts = entry.date.split(' ');
+    if (parts.length < 3) return acc;
+    
+    const month = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+    const year = parts[2];
+    const key = `${month} ${year}`;
+
+    if (!acc[key]) acc[key] = { label: key, count: 0, items: [] };
+    acc[key].items.push(entry);
+    acc[key].count += 1;
+    return acc;
+  }, {});
+
+  const monthsArray = Object.values(grouped);
+  // Domyślnie rozwijamy pierwszy (najnowszy) miesiąc
+  const defaultExpanded = monthsArray.length > 0 ? monthsArray[0].label : null;
 
   return (
     <View style={styles.root}>
@@ -47,36 +55,46 @@ export default function MomentsScreen({ onBack, onOpenMoment, onHome, onProfile 
         </View>
 
         <View style={styles.monthsWrap}>
-          {SAMPLE_MONTHS.map((m) => (
-            <View key={m.id} style={styles.monthGroup}>
-              <TouchableOpacity style={styles.monthHeader} activeOpacity={0.7} onPress={() => toggle(m.id)}>
-                <Text style={styles.monthTitle}>{m.label}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Text style={styles.monthCount}>{m.count} chwile</Text>
-                  <Text style={styles.monthChevron}>{expanded[m.id] ? '⌃' : '⌄'}</Text>
-                </View>
-              </TouchableOpacity>
+          {monthsArray.length === 0 ? (
+            <Text style={{ color: COLORS.textMuted, textAlign: 'center', marginTop: 20 }}>
+              Nie masz jeszcze żadnych wpisów. Zacznij już dziś!
+            </Text>
+          ) : (
+            monthsArray.map((m) => {
+              const isOpen = expanded[m.label] !== undefined ? expanded[m.label] : m.label === defaultExpanded;
+              
+              return (
+                <View key={m.label} style={styles.monthGroup}>
+                  <TouchableOpacity style={styles.monthHeader} activeOpacity={0.7} onPress={() => toggle(m.label)}>
+                    <Text style={styles.monthTitle}>{m.label}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Text style={styles.monthCount}>{m.count} {m.count === 1 ? 'chwila' : 'chwile'}</Text>
+                      <Text style={styles.monthChevron}>{isOpen ? '⌃' : '⌄'}</Text>
+                    </View>
+                  </TouchableOpacity>
 
-              {expanded[m.id] && m.items.map((item) => (
-                <TouchableOpacity key={item.id} style={styles.card} activeOpacity={0.8} onPress={() => onOpenMoment(item)}>
-                  <View style={styles.thumb}>
-                    <MountainScene height={88} theme="dawn" />
-                  </View>
-                  <View style={styles.cardBody}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardDate} numberOfLines={1}>{item.date}</Text>
-                      <Text style={styles.cardTime}>{item.time}</Text>
-                    </View>
-                    <Text style={styles.cardText} numberOfLines={2}>{item.text}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                      <EmotionBadge emotionKey={item.emotion} />
-                    </View>
-                  </View>
-                  <Text style={styles.cardArrow}>›</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ))}
+                  {isOpen && m.items.map((item) => (
+                    <TouchableOpacity key={item.id} style={styles.card} activeOpacity={0.8} onPress={() => onOpenMoment(item)}>
+                      <View style={styles.thumb}>
+                        <MountainScene height={88} theme="dawn" />
+                      </View>
+                      <View style={styles.cardBody}>
+                        <View style={styles.cardTop}>
+                          <Text style={styles.cardDate} numberOfLines={1}>{item.date}</Text>
+                          <Text style={styles.cardTime}>{item.time}</Text>
+                        </View>
+                        <Text style={styles.cardText} numberOfLines={2}>{item.text}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                          <EmotionBadge emotionKey={item.emotion} />
+                        </View>
+                      </View>
+                      <Text style={styles.cardArrow}>›</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              );
+            })
+          )}
         </View>
       </ScrollView>
 
