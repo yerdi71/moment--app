@@ -2,59 +2,31 @@
   "expo": {
     "name": "Jeden Moment",
     "slug": "moment-app",
-    "version": "0.7.4",
+    "version": "0.8.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
     "assetBundlePatterns": ["**/*"],
     "splash": {
       "image": "./assets/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F0F0F"
+      "backgroundColor": "#0b0815"
     },
     "android": {
       "package": "com.yerdi71.moment",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#0F0F0F"
+        "backgroundColor": "#0b0815"
       },
-      "permissions": [
-        "VIBRATE",
-        "POST_NOTIFICATIONS",
-        "RECEIVE_BOOT_COMPLETED",
-        "SCHEDULE_EXACT_ALARM",
-        "CAMERA",
-        "RECORD_AUDIO",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "USE_BIOMETRIC",
-        "USE_FINGERPRINT",
-        "MODIFY_AUDIO_SETTINGS"
-      ],
-      "userInterfaceStyle": "automatic"
+      "userInterfaceStyle": "dark"
     },
     "ios": {
       "bundleIdentifier": "com.yerdi71.moment",
-      "buildNumber": "4",
-      "icon": "./assets/icon.png",
-      "infoPlist": {
-        "NSCameraUsageDescription": "Aplikacja używa aparatu do dodawania zdjęć do momentów.",
-        "NSMicrophoneUsageDescription": "Aplikacja używa mikrofonu do nagrywania notatek głosowych.",
-        "NSLocationWhenInUseUsageDescription": "Aplikacja używa lokalizacji do oznaczania miejsca momentu.",
-        "NSFaceIDUsageDescription": "Aplikacja używa Face ID do odblokowania dziennika."
-      }
+      "buildNumber": "5",
+      "icon": "./assets/icon.png"
     },
-    "web": {
-      "bundler": "metro"
-    },
-    "plugins": [
-      ["expo-notifications", { "icon": "./assets/icon.png", "color": "#8B5CF6", "sounds": [] }],
-      ["expo-av", { "microphonePermission": "Aplikacja używa mikrofonu do nagrywania notatek głosowych." }],
-      ["expo-camera", { "cameraPermission": "Aplikacja używa aparatu do dodawania zdjęć." }]
-    ],
     "description": "Dziennik wdzięczności — jeden moment dziennie.",
-    "primaryColor": "#8B5CF6",
-    "platforms": ["android", "ios", "web"]
+    "primaryColor": "#8b5cf6"
   }
 }
