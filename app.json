@@ -5,26 +5,21 @@
     "version": "0.8.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "icon": "./assets/icon.png",
-    "assetBundlePatterns": ["**/*"],
     "splash": {
-      "image": "./assets/icon.png",
-      "resizeMode": "contain",
       "backgroundColor": "#0b0815"
     },
+    "assetBundlePatterns": ["**/*"],
     "android": {
       "package": "com.yerdi71.moment",
       "versionCode": 5,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#0b0815"
       },
       "userInterfaceStyle": "dark"
     },
     "ios": {
       "bundleIdentifier": "com.yerdi71.moment",
-      "buildNumber": "5",
-      "icon": "./assets/icon.png"
+      "buildNumber": "5"
     },
     "description": "Dziennik wdzięczności — jeden moment dziennie.",
     "primaryColor": "#8b5cf6"
