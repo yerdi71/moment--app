@@ -2,9 +2,9 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { COLORS, SCREEN, HIT_SLOP } from '../theme';
 import { StarField, MountainScene } from '../components/Art';
-import { BottomNav } from '../components/UI';
+import { BottomNav, EmotionBadge } from '../components/UI';
 
-export default function HomeScreen({ onSettings, onWrite, onOpenLast, onMoments, onProfile }) {
+export default function HomeScreen({ onSettings, onWrite, onOpenLast, onMoments, onProfile, lastEntry }) {
   return (
     <View style={styles.root}>
       <StarField />
@@ -40,24 +40,35 @@ export default function HomeScreen({ onSettings, onWrite, onOpenLast, onMoments,
         </View>
       </View>
 
+      {/* Karta Ostatniego wpisu */}
       <TouchableOpacity style={styles.lastCard} activeOpacity={0.8} onPress={onOpenLast}>
         <View style={styles.lastHeader}>
           <Text style={styles.lastLabel}>OSTATNI MOMENT</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={styles.lastDate}>14 PAŹ 2026</Text>
-            <Text style={styles.lastArrow}>›</Text>
-          </View>
+          {lastEntry && (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={styles.lastDate}>{lastEntry.fullDate}</Text>
+              <Text style={styles.lastArrow}>›</Text>
+            </View>
+          )}
         </View>
-        <View style={styles.lastBody}>
-          <View style={styles.lastThumb}>
-            <View style={{ position: 'absolute', top: 10, right: 12, width: 14, height: 14, borderRadius: 7, backgroundColor: '#f3dcee', opacity: 0.9 }} />
-            <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 22, backgroundColor: '#1c1030' }} />
+        
+        {lastEntry ? (
+          <View style={styles.lastBody}>
+            <View style={styles.lastThumb}>
+              <MountainScene height={56} theme="dusk" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.lastTitle} numberOfLines={1}>{lastEntry.text}</Text>
+              <View style={{ marginTop: 4 }}>
+                <EmotionBadge emotionKey={lastEntry.emotion} />
+              </View>
+            </View>
           </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.lastTitle}>Spokojny wieczór nad jeziorem</Text>
-            <Text style={styles.lastDesc} numberOfLines={2}>Cisza, świeże powietrze i myśli, które nabierają sensu...</Text>
-          </View>
-        </View>
+        ) : (
+          <Text style={{ color: COLORS.textMuted, fontSize: 13, marginTop: 8 }}>
+            Twoja historia zaczyna się dzisiaj. Kliknij + powyżej.
+          </Text>
+        )}
       </TouchableOpacity>
 
       <BottomNav active="home" onHome={() => {}} onMoments={onMoments} onProfile={onProfile} />
@@ -91,5 +102,4 @@ const styles = StyleSheet.create({
   lastBody: { flexDirection: 'row', alignItems: 'center' },
   lastThumb: { width: 56, height: 56, borderRadius: 11, backgroundColor: '#1c1030', overflow: 'hidden' },
   lastTitle: { color: COLORS.white, fontSize: 13.5, fontWeight: '700' },
-  lastDesc: { color: COLORS.textMuted, fontSize: 12, marginTop: 3, lineHeight: 16 },
 });
